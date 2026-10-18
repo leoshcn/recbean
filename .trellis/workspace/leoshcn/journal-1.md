@@ -28,3 +28,25 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 录音豆：一键部署脚本与 PR 合并
+
+**Date**: 2026-10-18
+**Task**: 录音豆：一键部署脚本与 PR 合并
+**Branch**: `main`
+
+### Summary
+
+新增 deploy.sh（打包 server/、上传、旧镜像留作 recbean:prev、重建、健康检查，支持 --status/--rollback；远端 .env 与 data/ 不覆盖；解压加 --no-same-owner 修复 Windows 打包 uid 问题），根 README 补充项目说明与部署方式，测试机实跑通过；推送 feature/recbean-mvp，创建并合并 PR #1 到 main（7ce73c6）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9050027` | (see git log) |
+| `7ce73c6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
