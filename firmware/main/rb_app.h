@@ -5,8 +5,17 @@
 // 启停录音会话、清屏、重新配网、调背光、重绘）。
 //
 // 视图（design.md §7）：待机 / 连接中 / 录音 / 确认结束 / 保存中 / 结束 / 设置 / 配网 / 配对。
+// 两种录音模式（10-18-dual-mode-notes-meeting）：
+//   会议录音  待机单击确定 → 连接中 → started 后录音 → 确定 + 确认结束（下面 D4 的规则，不变）
+//   录音笔记  待机按住上（PTT_DOWN）→ 立即进入录音页（会话任务先采音、后台连服务器）
+//            松开（PTT_UP）：按住 < RB_PTT_MIN_MS 视为误触，取消并提示“按住说话”；
+//            否则进保存中并 SESSION_STOP。笔记录音中其他按键一律忽略；不进连接中/确认页。
+//            熄屏时按住上也直接开始（并点亮）；Wi-Fi 未连接时只提示。
+//            连接阶段失败 → 结束页（未保存）；保存成功 → 结束页显示本段文字，RB_NOTE_DONE_MS 后回待机。
+//   上键事件顺序：PTT_DOWN（按下）→ PTT_UP（松开）→ KEY_UP（单击，仅短按且滞后于松开）。
+//   一次笔记按键（或熄屏时只负责点亮的按下）之后到达的那个 KEY_UP 单击会被吞掉。
 // 按键（PRD D4）：
-//   待机   单击确定 = 开始录音；长按确定 = 设置
+//   待机   单击确定 = 开始会议录音；按住上 = 录音笔记；长按确定 = 设置
 //   录音   单击确定 = 进入“再按确定结束”确认（3 s 内再按确定结束，其他键或超时继续）
 //          上/下 = 往旧/新翻看，最后一次按键 5 s 后自动回到最新
 //   结束   任意键或 10 s 后回待机
@@ -65,7 +74,15 @@ typedef enum {
     RB_EV_SESS_SAVED,       // b = duration_ms, c = sentences
     RB_EV_SESS_ENDED,       // a = rb_fail_t；录音开始后异常结束
     RB_EV_TRANSCRIPT,       // c = 当前保留的定稿句数（供翻看夹取）
+    RB_EV_PTT_DOWN,         // 上键按下（按住说话开始）
+    RB_EV_PTT_UP,           // 上键松开（按住说话结束）
 } rb_ev_type_t;
+
+// 录音模式。
+typedef enum {
+    RB_MODE_MEETING = 0,    // 会议录音：区分说话人，确定 + 确认结束
+    RB_MODE_NOTE,           // 录音笔记：按住上说话，松开结束
+} rb_mode_t;
 
 typedef struct {
     rb_ev_type_t type;
@@ -92,6 +109,7 @@ typedef enum {
     RB_NOTICE_AUDIO,            // “麦克风启动失败”
     RB_NOTICE_ASR_ERROR,        // “识别出错，录音仍在保存”
     RB_NOTICE_SERVER_ERROR,     // “服务器出错”
+    RB_NOTICE_PTT_SHORT,        // “按住 上 键说话”（笔记按得太短，已丢弃）
 } rb_notice_t;
 
 typedef enum {
@@ -116,6 +134,8 @@ typedef enum {
 #define RB_CONNECT_GUARD_MS  12000  // 连接中兜底超时（会话任务自身超时更短）
 #define RB_SAVE_GUARD_MS     50000  // 等 saved 的兜底超时（会话任务自身：补发 ≤20 s + 等 saved 25 s）
 #define RB_DONE_MS           10000  // 结束页停留
+#define RB_NOTE_DONE_MS      3000   // 笔记结束页停留
+#define RB_PTT_MIN_MS        600    // 笔记按住短于此视为误触（会话任务据此推迟发 start，见 rb_session.c）
 #define RB_NOTICE_MS         4000   // 提示条显示时长
 #define RB_REPROV_ARM_MS     3000   // 重新配网二次确认窗口
 #define RB_DIM_IDLE_MS       30000  // 待机类页面调暗
@@ -130,7 +150,11 @@ typedef struct {
     bool wifi_up;
     int8_t server_state;        // -1 未知, 0 离线, 1 在线
     // 录音
-    uint32_t rec_start_ms;      // 收到 started 的时刻
+    rb_mode_t mode;             // 当前/最近一次录音的模式
+    bool ptt_held;              // 笔记：上键仍按着（等待 PTT_UP）
+    bool swallow_up_click;      // 吞掉下一次 KEY_UP 单击（属于刚处理过的那次上键按下）
+    bool sess_started;          // 本次会话已收到 started（笔记：false = 还在连服务器）
+    uint32_t rec_start_ms;      // 会议：收到 started 的时刻；笔记：按下上键的时刻
     uint32_t rec_end_ms;        // 用户确认结束的时刻（计时停止）
     bool link_ok;               // 录音中链路是否正常（false = 断网缓存中）
     bool asr_error;             // 本次录音收到过 asr_error
@@ -142,6 +166,7 @@ typedef struct {
     rb_done_kind_t done_kind;
     int64_t done_duration_ms;
     int32_t done_sentences;     // -1 = 未知
+    int8_t done_fail;           // 异常结束原因 rb_fail_t；-1 = 无
     // 设置
     uint8_t settings_sel;       // rb_settings_item_t
     int8_t settings_detail;     // -1 列表；RB_SET_SERVER / RB_SET_INFO 详情页
@@ -166,3 +191,6 @@ uint32_t rb_app_elapsed_ms(const rb_app_t *app, uint32_t now);
 
 // 是否属于录音会话进行中的视图（连接中/录音/确认结束/保存中）。
 bool rb_app_in_session(const rb_app_t *app);
+
+// 笔记录音中、仍在等上键松开：app 任务据此在 TICK 时读按键电平，补发丢失的 PTT_UP。
+bool rb_app_ptt_waiting_release(const rb_app_t *app);

@@ -55,12 +55,32 @@ python3 server/tools/fake_device.py --host 192.168.2.144:8090 --auto-confirm --w
   `resume_failed`. `{"type":"ping"}` → `{"type":"pong"}`.
 - `partial` text keeps the last ≤256 UTF-8 bytes, `final` text the first ≤256 bytes
   (full text is stored). `final.idx` is 0-based, `speaker` 1-based.
+- `start` may carry `"mode":"meeting"|"note"`; missing or unknown → `meeting` (old
+  firmware). The recording's `kind` is set from it and the default title is
+  `会议 MM-DD HH:MM` / `笔记 MM-DD HH:MM`. A `note` runs ASR with speaker diarization off
+  (`enable_speaker_info=false`, no `ssd_version`) and every `final` has `speaker` 1. All
+  other messages are identical for both modes. Deploy the server before firmware that
+  sends `mode` (an old server just stores notes as meetings).
 
 ## Web REST API (summary)
 
-- `GET /api/recordings` (list, newest first, with `speaker_count` / `sentence_count` /
-  `first_sentence` / `live`); `GET|PATCH {"title"}|DELETE /api/recordings/{id}`
-  (DELETE → 409 while live).
+- `GET /api/recordings[?kind=meeting|note]` (list, newest first, with `kind` /
+  `speaker_count` / `sentence_count` / `first_sentence` / `live`; bad kind → 422);
+  `GET|PATCH {"title"}|DELETE /api/recordings/{id}` (DELETE → 409 while live).
+  Existing databases get `recording.kind` added on startup (old rows → `meeting`).
+- Notes are grouped per calendar day in `TZ_NAME` (default Asia/Shanghai):
+  `GET /api/notes/days` → `[{date:"YYYY-MM-DD", count, duration_ms, first_text, live}]`
+  (newest day first); `GET /api/notes/days/{date}` → `{date, segments:[{id, title,
+  started_at, time:"HH:MM", duration_ms, status, error, live, sentences:[...]}]}` (oldest
+  first); `GET /api/notes/days/{date}/export.txt` → `笔记 YYYY-MM-DD`, blank line, then one
+  `HH:MM 文字` line per non-empty segment. Bad date → 422. Per-segment audio / edit /
+  delete use the `/api/recordings/{id}/...` endpoints.
+- Hotwords (shared by notes and meetings): `GET /api/hotwords` → `{budget, used,
+  items:[{id, word, tokens, active}]}`; `POST {"words":[...]}` (items may contain several
+  lines; blank lines ignored, duplicates skipped) → `{added, skipped, ...state}`;
+  `PATCH /api/hotwords/{id} {"word"}` (409 duplicate); `DELETE /api/hotwords/{id}`;
+  `PUT /api/hotwords/order {"ids":[...]}` (must be a permutation of all ids, else 400).
+  Words are trimmed, 1–32 characters (422 otherwise). Mutations return the new state.
 - `PATCH /api/recordings/{id}/sentences/{sid} {"text"?, "speaker_idx"?}` (text edit sets
   `edited`; reassignment does not).
 - `PATCH /api/recordings/{id}/speakers/{idx} {"name"}` → speaker list.
@@ -81,3 +101,17 @@ indexes in order of first appearance. All speaker parsing lives in `extract_spea
 (fixture: `tests/fixtures/doubao_responses.json`); re-check with
 `tools/asr_probe.py <16k wav>` if the upstream format changes.
 `tools/asr_probe.py --compare --ref ref.txt` runs PCM vs ADPCM for AC10.
+
+Hotwords (`app/hotwords.py`): every session gets the hotwords that fit
+`HOTWORD_TOKEN_BUDGET` (default 100) taken from the top of the list; the first word that
+does not fit and all words after it are inactive. Estimate per word: 1 token per CJK
+character / other symbol, 1 per run of ASCII letters+digits, +1 separator. They are sent
+as `request.corpus.context = json.dumps({"hotwords":[{"word":..}]}, ensure_ascii=False)`;
+no hotwords → no `corpus` key. The list is snapshotted at `start`, so edits only affect
+later recordings. Only the count is logged, never the words.
+
+Real-API check (2026-10-18, `volc.seedasr.sauc.duration`, probe
+`server/.localdata/hotword_probe.py` run inside the container): no error and no visible
+truncation up to 10 001 words (~40 000 characters, 260 KB context) — a target word placed
+first, in the middle or last was still applied. The documented "~100 tokens" is therefore
+not enforced as a hard limit; the budget is our own conservative cap and can be raised.

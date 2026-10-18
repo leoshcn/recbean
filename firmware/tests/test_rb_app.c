@@ -308,8 +308,292 @@ static void test_wraparound(void)
     assert(app.view == RB_VIEW_RECORDING);
 }
 
+// ---------------------------------------------------------------------------
+// 录音笔记（按住上说话）
+// ---------------------------------------------------------------------------
+
+static uint32_t ptt_start(void)
+{
+    uint32_t act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_RECORDING && app.mode == RB_MODE_NOTE);
+    assert(act & RB_ACT_SESSION_START);
+    assert(act & RB_ACT_CLEAR_TRANSCRIPT);
+    assert(app.ptt_held && !app.sess_started && !app.link_ok);
+    return act;
+}
+
+static void test_note_happy_path(void)
+{
+    now_ms = 5000;
+    ready_idle();
+    // 按下立即进入录音页（不经过连接中），计时从按下开始。
+    ptt_start();
+    tick_to(now_ms + 500);
+    assert(app.view == RB_VIEW_RECORDING && rb_app_elapsed_ms(&app, now_ms) == 500);
+    // started：只标记已连上，不重置计时、不切换视图。
+    uint32_t act = ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    assert(app.view == RB_VIEW_RECORDING && app.sess_started && app.link_ok);
+    assert(act & RB_ACT_RENDER);
+    assert(rb_app_elapsed_ms(&app, now_ms) == 500);
+    assert(rb_app_ptt_waiting_release(&app));
+    tick_to(now_ms + 2000);
+    // 笔记中其他按键一律忽略（没有确认页、不翻看、长按不取消）。
+    act = key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_RECORDING && !(act & (RB_ACT_SESSION_STOP | RB_ACT_SESSION_CANCEL)));
+    act = key(RB_EV_KEY_OK_LONG);
+    assert(app.view == RB_VIEW_RECORDING && !(act & (RB_ACT_SESSION_STOP | RB_ACT_SESSION_CANCEL)));
+    ev(RB_EV_TRANSCRIPT, 0, 0, 3);
+    key(RB_EV_KEY_DOWN);
+    assert(app.browse_offset == 0 && app.view == RB_VIEW_RECORDING);
+    // 松开：进保存中并停止会话，计时冻结。
+    uint32_t held = rb_app_elapsed_ms(&app, now_ms);
+    act = key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP));
+    assert(!(act & RB_ACT_SESSION_CANCEL));
+    assert(!app.ptt_held && !rb_app_ptt_waiting_release(&app));
+    tick_to(now_ms + 1000);
+    assert(rb_app_elapsed_ms(&app, now_ms) == held);
+    // 保存中随后到达的上键单击被吞掉；其他键也忽略。
+    key(RB_EV_KEY_UP);
+    key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_SAVING);
+    ev(RB_EV_SESS_SAVED, 0, 2500, 1);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_SAVED && app.mode == RB_MODE_NOTE);
+    assert(app.done_duration_ms == 2500 && app.done_sentences == 1);
+    // 笔记结束页约 3 s 自动回待机。
+    uint32_t done_at = now_ms;
+    tick_to(done_at + RB_NOTE_DONE_MS - 250);
+    assert(app.view == RB_VIEW_DONE);
+    tick_to(done_at + RB_NOTE_DONE_MS);
+    assert(app.view == RB_VIEW_IDLE);
+}
+
+static void test_note_done_dismiss(void)
+{
+    now_ms = 7000;
+    ready_idle();
+    ptt_start();
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    tick_to(now_ms + 1000);
+    key(RB_EV_PTT_UP);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 1);
+    assert(app.view == RB_VIEW_DONE);
+    // 松开后滞后的单击不能把结束页关掉……
+    key(RB_EV_KEY_UP);
+    assert(app.view == RB_VIEW_DONE);
+    // ……但用户真的再按一次（按下 → 松开 → 单击）就返回。
+    key(RB_EV_PTT_DOWN);
+    key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_DONE);
+    key(RB_EV_KEY_UP);
+    assert(app.view == RB_VIEW_IDLE);
+    // 其他键也可提前返回。
+    ptt_start();
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    tick_to(now_ms + 1000);
+    key(RB_EV_PTT_UP);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 1);
+    key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_IDLE);
+}
+
+static void test_note_short_press(void)
+{
+    now_ms = 9000;
+    ready_idle();
+    ptt_start();
+    now_ms += RB_PTT_MIN_MS - 1;
+    uint32_t act = key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_IDLE);
+    assert(act & RB_ACT_SESSION_CANCEL);
+    assert(!(act & RB_ACT_SESSION_STOP));
+    assert(app.notice == RB_NOTICE_PTT_SHORT);
+    // 随后的单击被吞掉（待机页上键本来也无作用），不开始任何会话。
+    act = key(RB_EV_KEY_UP);
+    assert(app.view == RB_VIEW_IDLE && !(act & RB_ACT_SESSION_START));
+    // 会话的迟到事件被忽略。
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    ev(RB_EV_SESS_FAILED, RB_FAIL_UNREACHABLE, 0, 0);
+    assert(app.view == RB_VIEW_IDLE && app.notice == RB_NOTICE_PTT_SHORT);
+    // 刚好达到最短时长 → 正常保存。
+    ptt_start();
+    now_ms += RB_PTT_MIN_MS;
+    act = key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP));
+}
+
+static void test_note_screen_off(void)
+{
+    now_ms = 20000;
+    ready_idle();
+    tick_to(now_ms + RB_OFF_IDLE_MS + 250);
+    assert(app.backlight == 0);
+    // 熄屏时按住上直接开始并点亮。
+    uint32_t act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_RECORDING && app.mode == RB_MODE_NOTE);
+    assert(act & RB_ACT_SESSION_START);
+    assert(app.backlight == RB_BACKLIGHT_FULL && (act & RB_ACT_BACKLIGHT));
+    tick_to(now_ms + 1000);
+    key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 0);
+    tick_to(now_ms + RB_NOTE_DONE_MS + 250);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 会议的“熄屏首次按键只点亮”不变：确定只点亮。
+    tick_to(now_ms + RB_OFF_IDLE_MS + 250);
+    assert(app.backlight == 0);
+    act = key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_IDLE && !(act & RB_ACT_SESSION_START) && app.backlight == RB_BACKLIGHT_FULL);
+
+    // 非待机页（设置页）熄屏时，上键的按下只点亮，随后的单击也不移动选择。
+    key(RB_EV_KEY_OK_LONG);
+    assert(app.view == RB_VIEW_SETTINGS);
+    tick_to(now_ms + RB_OFF_IDLE_MS + 250);
+    assert(app.backlight == 0);
+    uint8_t sel = app.settings_sel;
+    act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_SETTINGS && !(act & RB_ACT_SESSION_START));
+    assert(app.backlight == RB_BACKLIGHT_FULL);
+    key(RB_EV_PTT_UP);
+    key(RB_EV_KEY_UP);
+    assert(app.settings_sel == sel);
+    // 屏亮后再按上：正常移动选择。
+    key(RB_EV_PTT_DOWN);
+    key(RB_EV_PTT_UP);
+    key(RB_EV_KEY_UP);
+    assert(app.settings_sel != sel);
+}
+
+static void test_note_wifi_offline(void)
+{
+    now_ms = 30000;
+    rb_app_init(&app, RB_NET_READY, now_ms);
+    assert(app.view == RB_VIEW_IDLE && !app.wifi_up);
+    uint32_t act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_IDLE && !(act & RB_ACT_SESSION_START));
+    assert(app.notice == RB_NOTICE_WIFI_OFFLINE);
+    act = key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_IDLE && !(act & (RB_ACT_SESSION_STOP | RB_ACT_SESSION_CANCEL)));
+}
+
+static void test_note_failures(void)
+{
+    // 连接阶段失败（按着时）：进结束页（未保存），原因保留。
+    now_ms = 40000;
+    ready_idle();
+    ptt_start();
+    tick_to(now_ms + 3000);
+    ev(RB_EV_SESS_FAILED, RB_FAIL_UNREACHABLE, 0, 0);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_FAILED);
+    assert(app.done_fail == RB_FAIL_UNREACHABLE && !app.sess_started);
+    // 之后松开、滞后的单击都不影响结束页。
+    key(RB_EV_PTT_UP);
+    key(RB_EV_KEY_UP);
+    assert(app.view == RB_VIEW_DONE);
+    tick_to(now_ms + RB_NOTE_DONE_MS);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 松开后（保存中）还没连上就失败：同样进结束页。
+    ptt_start();
+    tick_to(now_ms + 1000);
+    uint32_t act = key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP));
+    ev(RB_EV_SESS_FAILED, RB_FAIL_BUSY, 0, 0);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_FAILED && app.done_fail == RB_FAIL_BUSY);
+    tick_to(now_ms + RB_NOTE_DONE_MS);
+
+    // 松开后才连上（缓冲补发）：started 在保存中到达，随后 saved。
+    ptt_start();
+    tick_to(now_ms + 1000);
+    key(RB_EV_PTT_UP);
+    // 连接阶段耗时较长：保存兜底从 started 重新起算，不会在补发/等 saved 期间提前触发。
+    tick_to(now_ms + 10000);
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    assert(app.view == RB_VIEW_SAVING && app.sess_started);
+    act = tick_to(now_ms + RB_SAVE_GUARD_MS - 1000);
+    assert(app.view == RB_VIEW_SAVING && !(act & RB_ACT_SESSION_CANCEL));
+    ev(RB_EV_SESS_SAVED, 0, 1000, 1);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_SAVED);
+    tick_to(now_ms + RB_NOTE_DONE_MS);
+
+    // 一直连不上、会话任务也没上报：应用兜底超时 → 结束页 + 取消。
+    ptt_start();
+    act = tick_to(now_ms + RB_CONNECT_GUARD_MS);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_FAILED);
+    assert(app.done_fail == RB_FAIL_UNREACHABLE && (act & RB_ACT_SESSION_CANCEL));
+    key(RB_EV_PTT_UP);
+    tick_to(now_ms + RB_NOTE_DONE_MS);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 已连上后长时间按住不触发兜底；录音中断网 → 缓冲；缓存溢出 → 中断结束页。
+    ptt_start();
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    tick_to(now_ms + RB_CONNECT_GUARD_MS * 2);
+    assert(app.view == RB_VIEW_RECORDING);
+    ev(RB_EV_SESS_LINK, 0, 0, 0);
+    assert(!app.link_ok);
+    ev(RB_EV_SESS_ENDED, RB_FAIL_OVERFLOW, 0, 0);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_INTERRUPTED);
+    assert(app.done_fail == RB_FAIL_OVERFLOW);
+}
+
+static void test_meeting_after_note(void)
+{
+    // 笔记之后再开会议：模式切回会议，会议路径与原来一致（含上键翻看与确认结束）。
+    now_ms = 60000;
+    ready_idle();
+    ptt_start();
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    tick_to(now_ms + 1000);
+    key(RB_EV_PTT_UP);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 1);
+    key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_IDLE);
+
+    start_recording();
+    assert(app.mode == RB_MODE_MEETING && app.sess_started);
+    ev(RB_EV_TRANSCRIPT, 0, 0, 5);
+    // 上键单击的完整事件序列：按下、松开不影响会议录音，单击往旧翻看。
+    uint32_t act = key(RB_EV_PTT_DOWN);
+    assert(!(act & (RB_ACT_SESSION_START | RB_ACT_SESSION_STOP | RB_ACT_SESSION_CANCEL)));
+    act = key(RB_EV_PTT_UP);
+    assert(!(act & (RB_ACT_SESSION_START | RB_ACT_SESSION_STOP | RB_ACT_SESSION_CANCEL)));
+    assert(!rb_app_ptt_waiting_release(&app));
+    key(RB_EV_KEY_UP);
+    assert(app.browse_offset == 1 && app.view == RB_VIEW_RECORDING);
+    key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_CONFIRM_STOP);
+    act = key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP));
+    ev(RB_EV_SESS_SAVED, 0, 1000, 5);
+    assert(app.view == RB_VIEW_DONE);
+    // 会议结束页仍停留 10 s。
+    uint32_t done_at = now_ms;
+    tick_to(done_at + RB_NOTE_DONE_MS + 1000);
+    assert(app.view == RB_VIEW_DONE);
+    tick_to(done_at + RB_DONE_MS);
+    assert(app.view == RB_VIEW_IDLE);
+    // 会议连接中失败仍回待机并提示（不进结束页）。
+    key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_CONNECTING && app.mode == RB_MODE_MEETING);
+    ev(RB_EV_SESS_FAILED, RB_FAIL_UNREACHABLE, 0, 0);
+    assert(app.view == RB_VIEW_IDLE && app.notice == RB_NOTICE_SERVER_OFFLINE);
+    // 连接中按上键：不开始笔记。
+    key(RB_EV_KEY_OK);
+    act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_CONNECTING && !(act & RB_ACT_SESSION_START));
+}
+
 int main(void)
 {
+    test_note_happy_path();
+    test_note_done_dismiss();
+    test_note_short_press();
+    test_note_screen_off();
+    test_note_wifi_offline();
+    test_note_failures();
+    test_meeting_after_note();
     test_happy_path();
     test_browse();
     test_failures();

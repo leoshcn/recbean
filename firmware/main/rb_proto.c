@@ -452,15 +452,16 @@ static int finish(int n, size_t cap)
     return (n < 0 || (size_t)n >= cap) ? -1 : n;
 }
 
-int rb_proto_build_start(char *buf, size_t cap, const char *fw_version)
+int rb_proto_build_start(char *buf, size_t cap, const char *fw_version, const char *mode)
 {
-    if (!buf || cap == 0 || !fw_version) return -1;
+    if (!buf || cap == 0 || !fw_version || !mode) return -1;
+    if (strcmp(mode, RB_PROTO_MODE_NOTE) != 0 && strcmp(mode, RB_PROTO_MODE_MEETING) != 0) return -1;
     char fw[40];
     if (put_json_string(fw, sizeof(fw), fw_version) < 0) return -1;
     int n = snprintf(buf, cap,
                      "{\"type\":\"start\",\"sample_rate\":%d,\"ch\":1,"
-                     "\"codec\":\"ima_adpcm\",\"fw\":\"%s\"}",
-                     RB_ADPCM_SAMPLE_RATE, fw);
+                     "\"codec\":\"ima_adpcm\",\"fw\":\"%s\",\"mode\":\"%s\"}",
+                     RB_ADPCM_SAMPLE_RATE, fw, mode);
     return finish(n, cap);
 }
 

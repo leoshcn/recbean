@@ -10,6 +10,15 @@
 - **Speaker label location (verified):** `result.utterances[].additions.speaker_id`, a string starting at `"0"`, only on `definite=true` utterances. Keep all parsing in `extract_speaker()`; the server renumbers raw labels to 1..N by first appearance.
 - No threshold / speaker-count parameter exists for streaming diarization. Short utterances (< 1 s) and emotional / child voices get split into extra speakers; the Web "合并说话人" endpoint is the correction path.
 - Always log `X-Tt-Logid` for every session (also on handshake failure).
+- Note mode (task `10-18-dual-mode-notes-meeting`): `enable_speaker_info=false` and **no** `ssd_version` is accepted; definite utterances then carry no speaker label. The gateway forces speaker 1 for `kind='note'` anyway.
+
+### Hotwords (`request.corpus.context`, verified 2026-10-18)
+
+- Sent as `{"corpus": {"context": json.dumps({"hotwords":[{"word":..}]}, ensure_ascii=False)}}` — a JSON *string*, not an object. Omit `corpus` entirely when there are no hotwords.
+- Effect confirmed with Windows TTS clips (`server/.localdata/hw_ref.txt`, `make_tts.ps1`): without hotwords 钭雯雯→窦文文, 晶宏→晶鸿, 灏芯/覃总→皓芯/谭总, 豆语速记/芃芃→斗语速记/鹏鹏, 闫珺/语聆模块→严峻/雨林模块; with the hotword each was recognized exactly. Homophone hotwords (鹿音豆 for an already-correct 录音豆) do **not** override a confident result.
+- The doc's "~100 tokens" is **not** a hard limit: 1 … 10 001 hotwords (up to ~40 000 chars / 260 KB context) never returned an error, and a target word placed first, in the middle or last of 1 000–10 001 filler words was still applied; meeting-mode diarization unaffected. Over-budget behaviour = neither error nor observable truncation.
+- So `HOTWORD_TOKEN_BUDGET` (default 100, estimate in `app/hotwords.py`) is our own conservative cap, not an API constraint; raising it is safe as far as errors go (recognition-quality impact of very long lists was not measured beyond the spot checks above).
+- Probe: `server/.localdata/hotword_probe.py` (copy into the container, `docker compose exec -T recbean python /tmp/hwprobe/hotword_probe.py once|scan ...`); it monkeypatches `build_request_params`, so it works against an older deployed image.
 
 ## File ASR (not used yet — option B deferred)
 

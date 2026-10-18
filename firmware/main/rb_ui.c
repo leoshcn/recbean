@@ -63,6 +63,7 @@ static lv_obj_t *s_rec_confirm, *s_rec_confirm_sub;
 static lv_obj_t *s_rec_saving, *s_rec_saving_label;
 // 结束
 static lv_obj_t *s_done_icon_bg, *s_done_icon, *s_done_title, *s_done_note, *s_done_stats, *s_done_url;
+static lv_obj_t *s_done_web, *s_done_text;   // 网页提示（会议）/ 本段文字（笔记）
 // 设置
 static lv_obj_t *s_set_rows[RB_SET_COUNT];
 static lv_obj_t *s_set_labels[RB_SET_COUNT];
@@ -77,6 +78,11 @@ static lv_obj_t *s_toast, *s_toast_label;
 static int s_last_view = -1;
 static uint32_t s_last_ts_version = UINT32_MAX;
 static uint32_t s_last_offset = UINT32_MAX;
+static int s_last_mode = -1;
+
+// 笔记结束页的本段文字（定稿句拼接）。只在结束页刷新，常驻静态区，不进 LVGL 堆。
+#define DONE_TEXT_CAP 480
+static char s_done_text_buf[DONE_TEXT_CAP];
 
 static const char *SETTINGS_TEXT[RB_SET_COUNT] = {"重新配网", "服务器地址", "设备信息", "返回"};
 
@@ -196,16 +202,19 @@ static void build_idle(lv_obj_t *scr)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     // 中央红色“录音键”：提示单击确定开始录音。
-    lv_obj_t *ring = dot(s_pg_idle, 112, 0x3A1A20);
-    lv_obj_align(ring, LV_ALIGN_TOP_MID, 0, 40);
-    lv_obj_t *btn = dot(ring, 88, C_RED);
+    lv_obj_t *ring = dot(s_pg_idle, 100, 0x3A1A20);
+    lv_obj_align(ring, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_t *btn = dot(ring, 78, C_RED);
     lv_obj_center(btn);
     lv_obj_t *mic = label(btn, RB_FONT_NUM40, 0xFFFFFF, LV_SYMBOL_AUDIO);
     lv_obj_center(mic);
 
-    lv_obj_t *hint = label(s_pg_idle, rb_font_cn(), C_TEXT, "按 确定 开始录音");
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 166);
-    lv_obj_t *sub = label(s_pg_idle, rb_font_cn(), C_MUTED, "长按 确定 进入设置");
+    // 三行操作提示（两种录音模式 + 设置），行距 22 px。
+    lv_obj_t *meet = label(s_pg_idle, rb_font_cn(), C_TEXT, "按 确定 会议录音");
+    lv_obj_align(meet, LV_ALIGN_TOP_MID, 0, 146);
+    lv_obj_t *note = label(s_pg_idle, rb_font_cn(), C_TEXT, "按住 上 记笔记");
+    lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 168);
+    lv_obj_t *sub = label(s_pg_idle, rb_font_cn(), C_MUTED, "长按 确定 设置");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 190);
 
     s_idle_status = wrap_label(s_pg_idle, C_MUTED, "", 210);
@@ -297,8 +306,15 @@ static void build_done(lv_obj_t *scr)
     lv_obj_align(s_done_note, LV_ALIGN_TOP_MID, 0, 108);
     s_done_stats = wrap_label(s_pg_done, C_TEXT, "", 208);
     lv_obj_align(s_done_stats, LV_ALIGN_TOP_MID, 0, 150);
-    lv_obj_t *web = label(s_pg_done, rb_font_cn(), C_MUTED, "在网页查看、回放和修改");
-    lv_obj_align(web, LV_ALIGN_TOP_MID, 0, 196);
+    s_done_web = label(s_pg_done, rb_font_cn(), C_MUTED, "在网页查看、回放和修改");
+    lv_obj_align(s_done_web, LV_ALIGN_TOP_MID, 0, 196);
+    // 笔记：本段识别出的文字。固定 5 行高（行高约 22 px），超出部分以省略号结尾。
+    s_done_text = label(s_pg_done, rb_font_cn(), C_TEXT, "");
+    lv_obj_set_size(s_done_text, 208, 112);
+    lv_label_set_long_mode(s_done_text, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_align(s_done_text, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_align(s_done_text, LV_ALIGN_TOP_MID, 0, 112);
+    show(s_done_text, false);
     s_done_url = label(s_pg_done, RB_FONT_ICON, C_TEXT, "");
     lv_obj_align(s_done_url, LV_ALIGN_TOP_MID, 0, 218);
     lv_obj_t *hint = label(s_pg_done, rb_font_cn(), C_MUTED, "按任意键返回");
@@ -414,6 +430,7 @@ static const char *notice_text(rb_notice_t n)
     case RB_NOTICE_AUDIO: return "麦克风启动失败";
     case RB_NOTICE_ASR_ERROR: return "识别出错，录音仍在保存";
     case RB_NOTICE_SERVER_ERROR: return "服务器出错";
+    case RB_NOTICE_PTT_SHORT: return "按住 上 键说话，松开结束";
     case RB_NOTICE_NONE:
     default: return "";
     }
@@ -438,7 +455,7 @@ static void render_bar(const rb_app_t *app, const rb_ui_info_t *info, uint32_t n
         if (app->view == RB_VIEW_SETTINGS) title = "设置";
         else if (app->view == RB_VIEW_PROVISIONING) title = "配网";
         else if (app->view == RB_VIEW_PAIRING) title = "配对";
-        else if (app->view == RB_VIEW_DONE) title = "录音结束";
+        else if (app->view == RB_VIEW_DONE) title = app->mode == RB_MODE_NOTE ? "录音笔记" : "录音结束";
         set_text(s_bar_title, title);
     } else {
         // 红点每 500 ms 闪烁；保存中常亮。
@@ -448,10 +465,19 @@ static void render_bar(const rb_app_t *app, const rb_ui_info_t *info, uint32_t n
         rb_format_duration(t, sizeof(t), rb_app_elapsed_ms(app, now));
         set_text(s_bar_rec_time, t);
         char c[32] = "";
-        if (!app->link_ok) {
+        bool note = app->mode == RB_MODE_NOTE;
+        uint32_t color = C_AMBER;
+        if (note && !app->sess_started) {
+            // 笔记：按下就在录，服务器还没连上时只做小标记，计时照走。
+            if (app->view != RB_VIEW_SAVING) snprintf(c, sizeof(c), "连接中");
+        } else if (!app->link_ok) {
             snprintf(c, sizeof(c), "断网缓存 %lus", (unsigned long)(info->backlog_ms / 1000u));
+        } else if (note && app->view == RB_VIEW_RECORDING) {
+            snprintf(c, sizeof(c), "正在听");
+            color = C_MUTED;
         }
         set_text(s_bar_cache, c);
+        set_color(s_bar_cache, color);
     }
 
     // 右上角电量：读不到（-1）时不显示，避免误导。
@@ -485,9 +511,13 @@ static void render_idle(const rb_app_t *app, const rb_ui_info_t *info)
 static void render_transcript(const rb_app_t *app, const rb_transcript_t *ts)
 {
     uint32_t offset = rb_transcript_clamp_offset(ts, app->browse_offset);
-    if (ts->version == s_last_ts_version && offset == s_last_offset) return;
+    bool note = app->mode == RB_MODE_NOTE;
+    if (ts->version == s_last_ts_version && offset == s_last_offset && (int)app->mode == s_last_mode) return;
     s_last_ts_version = ts->version;
     s_last_offset = offset;
+    s_last_mode = (int)app->mode;
+    // 笔记只有一个说话人：不显示说话人标签；空白提示换成按住说话的文案。
+    set_text(s_rec_empty, note ? "正在听…\n松开 上 键结束" : "正在聆听…\n说话后文字会显示在这里");
 
     uint32_t count = rb_transcript_count(ts);
     int32_t last = (int32_t)count - 1 - (int32_t)offset;          // 视图中最下面一句
@@ -504,6 +534,7 @@ static void render_transcript(const rb_app_t *app, const rb_transcript_t *ts)
         // 文本常驻于静态转写缓冲 / 静态标签缓冲：用 static 版本，不复制进 LVGL 堆。
         lv_label_set_text_static(s_slot_tag[i], s_slot_tag_buf[i]);
         set_color(s_slot_tag[i], speaker_color(s->speaker));
+        show(s_slot_tag[i], !note);
         lv_label_set_text_static(s_slot_text[i], s->text);
         show(s_slot_row[i], true);
     }
@@ -537,11 +568,42 @@ static void render_recording(const rb_app_t *app, const rb_transcript_t *ts, uin
     }
 }
 
-static void render_done(const rb_app_t *app, const rb_ui_info_t *info)
+// 笔记连接阶段失败（服务端还没有这条录音）的原因说明。
+static const char *note_fail_text(int8_t reason)
+{
+    switch ((rb_fail_t)reason) {
+    case RB_FAIL_AUTH: return "设备未授权，请在网页上重新确认配对码";
+    case RB_FAIL_BUSY: return "服务器忙，请稍后再试";
+    case RB_FAIL_AUDIO: return "麦克风启动失败";
+    case RB_FAIL_SERVER: return "服务器出错";
+    case RB_FAIL_UNREACHABLE:
+    default: return "服务器未连接";
+    }
+}
+
+// 把本段所有定稿句拼成一段（笔记单说话人，直接连接）。没有定稿时用进行中句子兜底。
+static const char *note_text(const rb_transcript_t *ts)
+{
+    size_t len = 0;
+    uint32_t count = rb_transcript_count(ts);
+    for (uint32_t i = 0; i < count && len + 1 < sizeof(s_done_text_buf); i++) {
+        const rb_sentence_t *s = rb_transcript_get(ts, i);
+        if (!s) continue;
+        len += rb_utf8_copy_head(s_done_text_buf + len, sizeof(s_done_text_buf) - len, s->text, strlen(s->text));
+    }
+    if (len == 0 && ts->partial[0]) {
+        len = rb_utf8_copy_head(s_done_text_buf, sizeof(s_done_text_buf), ts->partial, strlen(ts->partial));
+    }
+    s_done_text_buf[len] = '\0';
+    return len ? s_done_text_buf : "（没有识别到文字）";
+}
+
+static void render_done(const rb_app_t *app, const rb_transcript_t *ts, const rb_ui_info_t *info)
 {
     uint32_t color = C_GREEN;
     const char *icon = LV_SYMBOL_OK;
-    const char *title = "已保存";
+    bool note_mode = app->mode == RB_MODE_NOTE;
+    const char *title = note_mode ? "已记入今日笔记" : "已保存";
     const char *note = app->asr_error ? "识别出过错，音频已完整保存" : "";
     switch (app->done_kind) {
     case RB_DONE_INTERRUPTED:
@@ -561,6 +623,11 @@ static void render_done(const rb_app_t *app, const rb_ui_info_t *info)
         icon = LV_SYMBOL_CLOSE;
         title = "录音异常结束";
         note = "已上传的部分会保存在服务器";
+        if (note_mode && !app->sess_started) {
+            // 还没连上服务器就失败：这一段没有保存。
+            title = "这段笔记未保存";
+            note = note_fail_text(app->done_fail);
+        }
         break;
     case RB_DONE_SAVED:
     default:
@@ -569,6 +636,17 @@ static void render_done(const rb_app_t *app, const rb_ui_info_t *info)
     lv_obj_set_style_bg_color(s_done_icon_bg, lv_color_hex(color), 0);
     set_text(s_done_icon, icon);
     set_text(s_done_title, title);
+    // 笔记保存成功：图标与标题下面直接显示本段文字，约 3 s 后自动回待机。
+    bool show_text = note_mode && app->done_kind == RB_DONE_SAVED;
+    show(s_done_text, show_text);
+    show(s_done_note, !show_text);
+    show(s_done_stats, !show_text);
+    show(s_done_web, !show_text);
+    show(s_done_url, !show_text);
+    if (show_text) {
+        set_text(s_done_text, note_text(ts));
+        return;
+    }
     set_text(s_done_note, note);
     char dur[16];
     rb_format_duration(dur, sizeof(dur), app->done_duration_ms > 0 ? (uint64_t)app->done_duration_ms : 0);
@@ -688,7 +766,7 @@ void rb_ui_render(const rb_app_t *app, const rb_transcript_t *ts, const rb_ui_in
     case RB_VIEW_RECORDING:
     case RB_VIEW_CONFIRM_STOP:
     case RB_VIEW_SAVING: render_recording(app, ts, now); break;
-    case RB_VIEW_DONE: render_done(app, info); break;
+    case RB_VIEW_DONE: render_done(app, ts, info); break;
     case RB_VIEW_SETTINGS: render_settings(app, info); break;
     case RB_VIEW_PROVISIONING: render_prov(info); break;
     case RB_VIEW_PAIRING: render_pair(info); break;

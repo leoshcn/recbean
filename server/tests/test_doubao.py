@@ -41,6 +41,42 @@ def test_full_client_request_frame():
     assert req["enable_punc"] is True and req["enable_itn"] is True
     assert body["audio"] == {"format": "pcm", "codec": "raw", "rate": 16000, "bits": 16,
                              "channel": 1}
+    assert "corpus" not in req  # no hotwords -> request unchanged
+
+
+def test_request_params_note_mode_disables_diarization():
+    req = build_request_params("u", speaker_info=False)["request"]
+    assert req["enable_speaker_info"] is False
+    assert "ssd_version" not in req
+    assert req["enable_nonstream"] is True and "corpus" not in req
+
+
+def test_request_params_hotwords_corpus_context():
+    req = build_request_params("u", hotwords=["录音豆", "ESP32"])["request"]
+    ctx = req["corpus"]["context"]
+    assert isinstance(ctx, str) and "录音豆" in ctx  # ensure_ascii=False
+    assert json.loads(ctx) == {"hotwords": [{"word": "录音豆"}, {"word": "ESP32"}]}
+    assert build_request_params("u", hotwords=[])["request"].get("corpus") is None
+    # survives the gzip/JSON frame encoding
+    f = parse_client_frame(encode_full_client_request(
+        build_request_params("u", speaker_info=False, hotwords=["豆包"]), seq=1))
+    body = json.loads(f["payload"])
+    assert json.loads(body["request"]["corpus"]["context"])["hotwords"] == [{"word": "豆包"}]
+
+
+def test_engine_factory_kind_and_hotwords(tmp_path):
+    from app.asr import UnconfiguredAsrEngine
+    from app.doubao_asr import engine_factory_from_settings
+    from conftest import make_settings
+
+    settings = make_settings(tmp_path)
+    factory = engine_factory_from_settings(settings)
+    assert isinstance(factory("note", ["x"]), UnconfiguredAsrEngine)
+    settings.doubao_api_key = "k"
+    meeting = factory("meeting", [])
+    note = factory("note", ["录音豆"])
+    assert meeting.cfg.speaker_info is True and meeting.cfg.hotwords == []
+    assert note.cfg.speaker_info is False and note.cfg.hotwords == ["录音豆"]
 
 
 def test_audio_frames_sequence_and_last():
@@ -260,7 +296,7 @@ def test_gateway_with_doubao_engine_and_fake_server(make_client):
     assert ready.wait(5)
     try:
         holder = {}
-        client = make_client(asr_factory=lambda: holder["factory"]())
+        client = make_client(asr_factory=lambda *a: holder["factory"](*a))
         settings = client.app.state.settings
         settings.doubao_url = f"ws://127.0.0.1:{state['port']}"
         settings.doubao_app_key, settings.doubao_access_key = "a", "b"

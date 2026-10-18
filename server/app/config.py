@@ -40,6 +40,10 @@ class Settings:
     pairing_ttl_s: float = field(default_factory=lambda: float(_env("PAIRING_TTL_S", "600")))
     timezone: str = field(default_factory=lambda: _env("TZ_NAME", "Asia/Shanghai"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
+    # Estimated-token budget for hotwords sent with every ASR session (app/hotwords.py).
+    hotword_token_budget: int = field(
+        default_factory=lambda: int(_env("HOTWORD_TOKEN_BUDGET", "100") or "100")
+    )
 
     @property
     def db_path(self) -> Path:

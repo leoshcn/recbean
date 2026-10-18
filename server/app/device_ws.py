@@ -4,7 +4,8 @@ Endpoint ``/device/ws`` with ``Authorization: Bearer <device_token>``.
 
 Device -> server (text JSON unless noted)::
 
-    {"type":"start","sample_rate":16000,"ch":1,"codec":"ima_adpcm","fw":"x.y.z"}
+    {"type":"start","sample_rate":16000,"ch":1,"codec":"ima_adpcm","fw":"x.y.z",
+     "mode":"meeting|note"}
     <binary ADPCM frame, see adpcm.py>
     {"type":"stop"}
     {"type":"resume","recording_id":"...","next_seq":N}
@@ -16,6 +17,10 @@ Server -> device::
     {"type":"final","idx":n,"speaker":1,"start_ms":..,"end_ms":..,"text":"..."}
     {"type":"error","code":"asr_error|auth|busy","msg":"..."}
     {"type":"saved","recording_id":"...","duration_ms":..,"sentences":n}
+
+``mode`` is optional: missing or unknown values mean ``meeting`` (old firmware). A
+``note`` recording runs ASR without speaker diarization and all its sentences belong to
+speaker 1. Both modes send the currently active hotwords with the ASR request.
 
 Additional error codes (outside the v1 table, device may treat as generic error):
 ``bad_request`` (malformed/unsupported start), ``not_recording`` (stop without an
@@ -38,6 +43,7 @@ from starlette.websockets import WebSocketDisconnect
 from .adpcm import FRAME_SAMPLES, FrameError, decode_frame
 from .asr import AsrFactory, FinalEvent, PartialEvent
 from .config import Settings
+from .hotwords import active_words
 from .pairing import hash_token
 from .store import Store
 from .wav import WavWriter
@@ -47,6 +53,12 @@ log = logging.getLogger("recbean.device")
 DEVICE_TEXT_MAX = 256  # bytes, design.md §3
 MAX_GAP_FRAMES = 300  # fill at most 60 s of silence for a sequence gap
 DURATION_UPDATE_MS = 5000
+TITLE_PREFIX = {"meeting": "会议", "note": "笔记"}
+
+
+def parse_mode(value) -> str:
+    """Device start ``mode`` -> recording kind; missing/unknown means meeting."""
+    return "note" if value == "note" else "meeting"
 
 
 def truncate_head(text: str, limit: int = DEVICE_TEXT_MAX) -> str:
@@ -61,13 +73,19 @@ def truncate_tail(text: str, limit: int = DEVICE_TEXT_MAX) -> str:
 
 
 class SpeakerMapper:
-    """Map raw ASR speaker labels to 1-based indexes in order of first appearance."""
+    """Map raw ASR speaker labels to 1-based indexes in order of first appearance.
 
-    def __init__(self) -> None:
+    With ``single=True`` (note mode) every sentence maps to speaker 1.
+    """
+
+    def __init__(self, single: bool = False) -> None:
         self._map: dict[str, int] = {}
         self._last = 1
+        self.single = single
 
     def idx(self, label: Optional[str]) -> int:
+        if self.single:
+            return 1
         if label is None:
             return self._last
         if label not in self._map:
@@ -98,11 +116,15 @@ class DeviceConn:
 
 
 class RecordingSession:
-    def __init__(self, gw: "Gateway", rec_id: str, device_id: str) -> None:
+    def __init__(self, gw: "Gateway", rec_id: str, device_id: str, kind: str = "meeting",
+                 hotwords: Optional[list[str]] = None) -> None:
         self.gw = gw
         self.store = gw.store
         self.rec_id = rec_id
         self.device_id = device_id
+        self.kind = kind
+        # Snapshot at start: hotword edits only affect recordings started afterwards.
+        self.hotwords = list(hotwords or [])
         self.wav = WavWriter(gw.settings.audio_dir / f"{rec_id}.wav")
         self.next_seq = 0
         self.conn: Optional[DeviceConn] = None
@@ -111,7 +133,7 @@ class RecordingSession:
         self.asr_task: Optional[asyncio.Task] = None
         self.asr_failed = False
         self.asr_closed = False
-        self.speakers = SpeakerMapper()
+        self.speakers = SpeakerMapper(single=(kind == "note"))
         self.finished = False
         self.resume_timer: Optional[asyncio.Task] = None
         self.last_partial = ""
@@ -191,7 +213,7 @@ class RecordingSession:
 
     async def _run_asr(self) -> None:
         try:
-            engine = self.gw.asr_factory()
+            engine = self.gw.asr_factory(self.kind, self.hotwords)
             await engine.run(self._audio_iter(), self._on_asr_event)
         except asyncio.CancelledError:
             raise
@@ -263,9 +285,15 @@ class Gateway:
         self.sessions: dict[str, RecordingSession] = {}
         self.tz = _zone(settings.timezone)
 
-    def _new_id(self) -> tuple[str, str]:
+    def _new_id(self, kind: str = "meeting") -> tuple[str, str]:
         now = datetime.now(self.tz)
-        return now.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2), now.strftime("录音 %m-%d %H:%M")
+        prefix = TITLE_PREFIX.get(kind, TITLE_PREFIX["meeting"])
+        return (now.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2),
+                now.strftime(f"{prefix} %m-%d %H:%M"))
+
+    def active_hotwords(self) -> list[str]:
+        words = [h["word"] for h in self.store.list_hotwords()]
+        return active_words(words, self.settings.hotword_token_budget)
 
     async def start(self, conn: DeviceConn, msg: dict) -> Optional[RecordingSession]:
         if (msg.get("codec", "ima_adpcm"), msg.get("sample_rate", 16000),
@@ -277,13 +305,16 @@ class Gateway:
         for s in list(self.sessions.values()):
             if s.device_id == conn.device_id:
                 await s.finish(interrupted=True)
-        rec_id, title = self._new_id()
+        kind = parse_mode(msg.get("mode"))
+        rec_id, title = self._new_id(kind)
         audio_path = self.settings.audio_dir / f"{rec_id}.wav"
-        self.store.create_recording(rec_id, title, conn.device_id, str(audio_path))
-        session = RecordingSession(self, rec_id, conn.device_id)
+        self.store.create_recording(rec_id, title, conn.device_id, str(audio_path), kind=kind)
+        hotwords = self.active_hotwords()
+        session = RecordingSession(self, rec_id, conn.device_id, kind=kind, hotwords=hotwords)
         self.sessions[rec_id] = session
         session.conn = conn
-        log.info("recording %s started by device %s fw=%s", rec_id, conn.device_id, msg.get("fw"))
+        log.info("recording %s (%s) started by device %s fw=%s hotwords=%d", rec_id, kind,
+                 conn.device_id, msg.get("fw"), len(hotwords))
         await conn.send({"type": "started", "recording_id": rec_id})
         session.start_asr()
         return session

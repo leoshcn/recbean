@@ -1,6 +1,6 @@
 <template>
   <div>
-    <router-link to="/">← 返回列表</router-link>
+    <router-link :to="backTo">← 返回列表</router-link>
     <p v-if="error" class="error">{{ error }}</p>
     <template v-if="rec">
       <div class="card">
@@ -110,6 +110,8 @@ const speakerDraft = ref('')
 const editingId = ref(null)
 const draft = ref('')
 let timer = null
+
+const backTo = computed(() => (rec.value?.kind === 'note' ? '/notes' : '/meetings'))
 
 const audioSrc = computed(() => `${api.audioUrl(props.id)}?v=${audioVersion.value}`)
 
@@ -225,7 +227,7 @@ async function remove() {
   if (!confirm(`确定删除“${rec.value.title}”？音频和转写将一并删除，无法恢复。`)) return
   try {
     await api.deleteRecording(props.id)
-    router.push('/')
+    router.push(backTo.value)
   } catch (e) {
     alert(`删除失败：${e.message}`)
   }

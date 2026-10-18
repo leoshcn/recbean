@@ -95,14 +95,18 @@ static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user)
     (void)user;
     if (!s_ready) return;
     rb_ev_type_t type;
-    if (ev == BSP_BTN_CLICK) {
+    if (btn == BSP_BTN_UP && ev == BSP_BTN_PRESS) {
+        type = RB_EV_PTT_DOWN;     // 按住说话（录音笔记）
+    } else if (btn == BSP_BTN_UP && ev == BSP_BTN_RELEASE) {
+        type = RB_EV_PTT_UP;
+    } else if (ev == BSP_BTN_CLICK) {
         if (btn == BSP_BTN_UP) type = RB_EV_KEY_UP;
         else if (btn == BSP_BTN_DOWN) type = RB_EV_KEY_DOWN;
         else type = RB_EV_KEY_OK;
     } else if (ev == BSP_BTN_LONG && btn == BSP_BTN_OK) {
         type = RB_EV_KEY_OK_LONG;
     } else {
-        return;   // 按下/双击/上下长按不使用
+        return;   // 下/确定的按下与松开、双击、上下长按不使用
     }
     (void)rb_bus_event(type, 0, 0, 0, 0);
 }
@@ -128,7 +132,7 @@ static void refresh_info(uint32_t now, bool force_battery)
 static void run_actions(uint32_t act)
 {
     if (act & RB_ACT_CLEAR_TRANSCRIPT) rb_transcript_reset(&s_ts);
-    if (act & RB_ACT_SESSION_START) rb_session_start();
+    if (act & RB_ACT_SESSION_START) rb_session_start(s_app.mode);
     if (act & RB_ACT_SESSION_STOP) rb_session_stop();
     if (act & RB_ACT_SESSION_CANCEL) rb_session_cancel();
     if (act & RB_ACT_REPROVISION) rb_net_request_reprovision();
@@ -150,6 +154,32 @@ static uint32_t dispatch(const rb_post_t *p, uint32_t now)
     }
     rb_event_t ev = {.type = RB_EV_TRANSCRIPT, .c = (int32_t)rb_transcript_count(&s_ts)};
     return rb_app_handle(&s_app, &ev, now) | RB_ACT_RENDER;
+}
+
+// 笔记录音中 PTT_UP 丢失的兜底（例如转写消息把队列塞满时按键回调入队失败）：
+// 每个 TICK 读一次按键电平，连续 PTT_RELEASE_TICKS 次不在“上”键窗口内就补发 PTT_UP。
+// 正常的松开事件经按键组件去抖后几十毫秒内就到，总是先于这里生效。
+#define PTT_RELEASE_TICKS 2
+static uint32_t check_ptt_release(uint32_t now)
+{
+    static const uint16_t win[BSP_BTN_COUNT][2] = BSP_BTN_MV_TABLE;
+    static uint8_t misses;
+    if (!rb_app_ptt_waiting_release(&s_app)) {
+        misses = 0;
+        return 0;
+    }
+    int mv = bsp_button_read_mv();
+    // 读失败时按“仍按着”处理，交给会话/状态机自身的超时。
+    bool held = mv < 0 || (mv >= win[BSP_BTN_UP][0] && mv < win[BSP_BTN_UP][1]);
+    if (held) {
+        misses = 0;
+        return 0;
+    }
+    if (++misses < PTT_RELEASE_TICKS) return 0;
+    misses = 0;
+    ESP_LOGW(TAG, "上键松开事件丢失（%d mV），按电平补发", mv);
+    rb_event_t up = {.type = RB_EV_PTT_UP};
+    return rb_app_handle(&s_app, &up, now);
 }
 
 static void log_heap(const char *where);
@@ -177,6 +207,7 @@ static void app_task(void *arg)
         }
         now = now_ms();
         if ((int32_t)(now - next_tick) >= 0) {
+            act |= check_ptt_release(now);
             rb_event_t tick = {.type = RB_EV_TICK};
             act |= rb_app_handle(&s_app, &tick, now);
             next_tick = now + TICK_MS;

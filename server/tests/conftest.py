@@ -20,10 +20,20 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class FakeAsr:
-    """Emits a partial per chunk and a final every 5 chunks; speakers alternate."""
+    """Emits a partial per chunk and a final every 5 chunks; speakers alternate.
 
-    def __init__(self, fail_after: int | None = None) -> None:
+    Also usable directly as an ``AsrFactory``; every instance records the
+    ``(kind, hotwords)`` it was created with in ``FakeAsr.calls``.
+    """
+
+    calls: list = []
+
+    def __init__(self, kind: str = "meeting", hotwords=None,
+                 fail_after: int | None = None) -> None:
+        self.kind = kind
+        self.hotwords = list(hotwords or [])
         self.fail_after = fail_after
+        FakeAsr.calls.append((kind, self.hotwords))
 
     async def run(self, audio, emit):
         n = 0
@@ -53,12 +63,16 @@ def make_settings(tmp_path: Path, **kw) -> Settings:
     s.doubao_app_key = s.doubao_access_key = s.doubao_api_key = ""
     s.resume_timeout_s = kw.get("resume_timeout_s", 30)
     s.asr_finish_timeout_s = 5
+    s.timezone = kw.get("timezone", "Asia/Shanghai")
+    s.hotword_token_budget = kw.get("hotword_token_budget", 100)
     return s
 
 
 @pytest.fixture
 def make_client(tmp_path):
     clients = []
+
+    FakeAsr.calls.clear()
 
     def factory(asr_factory=FakeAsr, **kw):
         app = create_app(make_settings(tmp_path, **kw), asr_factory=asr_factory)

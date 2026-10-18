@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import date as Date, datetime, timedelta
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
-from .models import (PairConfirm, PairRequest, RecordingPatch, SentencePatch, SpeakerMerge,
-                     SpeakerPatch)
+from .hotwords import estimate_tokens, normalize_word, select_active, validate_word
+from .models import (HotwordOrder, HotwordPatch, HotwordsAdd, PairConfirm, PairRequest,
+                     RecordingPatch, SentencePatch, SpeakerMerge, SpeakerPatch)
+from .store import KINDS
 
 log = logging.getLogger("recbean.api")
 
@@ -33,7 +36,7 @@ def _recording_or_404(request: Request, rec_id: str) -> dict:
 
 def _public(rec: dict, request: Request) -> dict:
     out = {k: rec[k] for k in ("id", "title", "device_id", "started_at", "duration_ms",
-                               "status", "error") if k in rec}
+                               "status", "error", "kind") if k in rec}
     for k in ("speaker_count", "sentence_count", "first_sentence"):
         if k in rec:
             out[k] = rec[k]
@@ -44,8 +47,10 @@ def _public(rec: dict, request: Request) -> dict:
 # ---- recordings ---------------------------------------------------------------
 
 @api.get("/recordings")
-def list_recordings(request: Request):
-    return [_public(r, request) for r in _store(request).list_recordings()]
+def list_recordings(request: Request, kind: Optional[str] = None):
+    if kind is not None and kind not in KINDS:
+        raise HTTPException(422, f"kind must be one of {', '.join(KINDS)}")
+    return [_public(r, request) for r in _store(request).list_recordings(kind)]
 
 
 @api.get("/recordings/{rec_id}")
@@ -198,6 +203,168 @@ def export_txt(rec_id: str, request: Request):
     disp = f"attachment; filename=\"{rec_id}.txt\"; filename*=UTF-8''{quote(fname)}"
     return PlainTextResponse(text, media_type="text/plain; charset=utf-8",
                              headers={"Content-Disposition": disp})
+
+
+# ---- notes (kind='note', grouped per local day) ---------------------------------
+
+PREVIEW_CHARS = 80
+
+
+def _tz(request: Request):
+    return request.app.state.gateway.tz
+
+
+def _local(ms: int, tz) -> datetime:
+    return datetime.fromtimestamp(ms / 1000, tz)
+
+
+def _day_range_ms(day: Date, tz) -> tuple[int, int]:
+    """[start, end) epoch ms of a calendar day in ``tz`` (None = server local time)."""
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    nxt = day + timedelta(days=1)
+    end = datetime(nxt.year, nxt.month, nxt.day, tzinfo=tz)
+    return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+
+
+def _parse_day(value: str) -> Date:
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError
+        return Date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(422, "date must be YYYY-MM-DD") from None
+
+
+def _day_segments(request: Request, day: Date) -> list[dict]:
+    store = _store(request)
+    tz = _tz(request)
+    sessions = request.app.state.gateway.sessions
+    start, end = _day_range_ms(day, tz)
+    out = []
+    for r in store.list_notes(start, end):
+        sentences = store.list_sentences(r["id"])
+        out.append({
+            "id": r["id"], "title": r["title"], "started_at": r["started_at"],
+            "time": _local(r["started_at"], tz).strftime("%H:%M"),
+            "duration_ms": r["duration_ms"], "status": r["status"], "error": r["error"],
+            "live": r["id"] in sessions,
+            "sentences": [{**s, "edited": bool(s["edited"])} for s in sentences],
+        })
+    return out
+
+
+@api.get("/notes/days")
+def note_days(request: Request):
+    """One entry per local day that has notes, newest day first."""
+    tz = _tz(request)
+    sessions = request.app.state.gateway.sessions
+    days: dict[str, dict] = {}
+    for r in _store(request).list_notes():  # oldest first
+        key = _local(r["started_at"], tz).strftime("%Y-%m-%d")
+        d = days.setdefault(key, {"date": key, "count": 0, "duration_ms": 0,
+                                  "first_text": "", "live": False})
+        d["count"] += 1
+        d["duration_ms"] += r["duration_ms"] or 0
+        d["live"] = d["live"] or r["id"] in sessions
+        if not d["first_text"] and r["text"]:
+            d["first_text"] = r["text"][:PREVIEW_CHARS]
+    return sorted(days.values(), key=lambda d: d["date"], reverse=True)
+
+
+@api.get("/notes/days/{day}")
+def note_day(day: str, request: Request):
+    d = _parse_day(day)
+    return {"date": d.isoformat(), "segments": _day_segments(request, d)}
+
+
+def export_note_day(day: Date, segments: list[dict]) -> str:
+    lines = [f"笔记 {day.isoformat()}", ""]
+    for seg in segments:
+        text = "".join(s["text"] for s in seg["sentences"]).strip()
+        if text:
+            lines.append(f"{seg['time']} {text}")
+    return "\n".join(lines) + "\n"
+
+
+@api.get("/notes/days/{day}/export.txt")
+def note_day_export(day: str, request: Request):
+    d = _parse_day(day)
+    text = export_note_day(d, _day_segments(request, d))
+    fname = f"笔记 {d.isoformat()}.txt"
+    disp = (f"attachment; filename=\"notes-{d.isoformat()}.txt\"; "
+            f"filename*=UTF-8''{quote(fname)}")
+    return PlainTextResponse(text, media_type="text/plain; charset=utf-8",
+                             headers={"Content-Disposition": disp})
+
+
+# ---- hotwords --------------------------------------------------------------------
+
+def _hotword_state(request: Request) -> dict:
+    budget = request.app.state.settings.hotword_token_budget
+    rows = _store(request).list_hotwords()
+    flags, used = select_active([r["word"] for r in rows], budget)
+    return {
+        "budget": budget,
+        "used": used,
+        "items": [{"id": r["id"], "word": r["word"], "tokens": estimate_tokens(r["word"]),
+                   "active": ok} for r, ok in zip(rows, flags)],
+    }
+
+
+def _clean_word(raw: str) -> str:
+    w = normalize_word(raw)
+    err = validate_word(w)
+    if err:
+        raise HTTPException(422, f"{err}：{w[:40]}" if w else err)
+    return w
+
+
+@api.get("/hotwords")
+def list_hotwords(request: Request):
+    return _hotword_state(request)
+
+
+@api.post("/hotwords")
+def add_hotwords(body: HotwordsAdd, request: Request):
+    """Append words (one per item; items may also contain several lines). Blank lines are
+    ignored, duplicates (with each other or existing words) are skipped."""
+    words = [normalize_word(line) for raw in body.words for line in str(raw).splitlines()]
+    words = [w for w in words if w]
+    if not words:
+        raise HTTPException(422, "热词不能为空")
+    words = [_clean_word(w) for w in words]
+    added, skipped = _store(request).add_hotwords(words)
+    log.info("hotwords: %d added, %d skipped", added, skipped)
+    return {"added": added, "skipped": skipped, **_hotword_state(request)}
+
+
+@api.patch("/hotwords/{hid}")
+def patch_hotword(hid: int, body: HotwordPatch, request: Request):
+    store = _store(request)
+    if not store.get_hotword(hid):
+        raise HTTPException(404, "hotword not found")
+    word = _clean_word(body.word)
+    if store.hotword_taken(word, hid):
+        raise HTTPException(409, f"热词已存在：{word}")
+    store.update_hotword(hid, word)
+    return _hotword_state(request)
+
+
+@api.delete("/hotwords/{hid}")
+def delete_hotword(hid: int, request: Request):
+    if not _store(request).delete_hotword(hid):
+        raise HTTPException(404, "hotword not found")
+    return _hotword_state(request)
+
+
+@api.put("/hotwords/order")
+def reorder_hotwords(body: HotwordOrder, request: Request):
+    store = _store(request)
+    current = sorted(r["id"] for r in store.list_hotwords())
+    if sorted(body.ids) != current:
+        raise HTTPException(400, "ids must be a permutation of all hotword ids")
+    store.reorder_hotwords(body.ids)
+    return _hotword_state(request)
 
 
 # ---- pairing (web side) -------------------------------------------------------

@@ -22,6 +22,7 @@ static const char *TAG = "rb_session";
 #define RB_FW_VERSION "0.1.0"
 
 // ---- 会话任务通知位（RB_AUDIO_NOTIFY_BIT = bit0 由 rb_audio 使用）----
+// 命令位只用于唤醒；命令本身看 s_req / s_stop_gen / s_cancel_gen 中的会话代号。
 #define BIT_CMD_START     (1u << 1)
 #define BIT_CMD_STOP      (1u << 2)
 #define BIT_CMD_CANCEL    (1u << 3)
@@ -40,7 +41,17 @@ static const char *TAG = "rb_session";
 #define SEND_TIMEOUT_MS     2000      // 单帧发送超时
 #define HEAP_LOG_MS         10000     // 录音中内存日志周期
 
+#define PTT_GATE_MARGIN_MS  150       // 笔记：按下满 RB_PTT_MIN_MS + 此余量才发 start（见 run_session 1b）
+
 static TaskHandle_t s_task;
+
+// ---- 命令（app 任务写，会话任务读；都是单个 32 位字，单写者）----
+// 每次 start 生成新的会话代号，stop/cancel 记下它们针对的代号。会话任务只认自己代号的
+// 命令：上一次会话残留的 cancel 不会误伤新会话；上一次会话收尾期间到达的新 start 也不会
+// 随通知位一起被清掉（通知位只用来唤醒）。笔记“快速点一下又马上按住”依赖这一点。
+static volatile uint32_t s_req;          // (代号 << 1) | (1 = 笔记)
+static volatile uint32_t s_stop_gen;     // 最近一次 stop 针对的代号
+static volatile uint32_t s_cancel_gen;   // 最近一次 cancel 针对的代号
 
 // ---- websocket 事件任务写、会话任务读（s_mux 保护）----
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -192,23 +203,35 @@ static rb_fail_t fail_from_error(void)
     return RB_FAIL_SERVER;
 }
 
+// 本会话已被取消，或 app 已经开始了更新的会话（代号变了）：旧会话应尽快收尾，且不再
+// 向 app 上报会话事件——会话事件不带代号，迟到的 FAILED/ENDED/SAVED 会被新会话误收。
+static bool cancelled(uint32_t gen)
+{
+    return s_cancel_gen == gen || (s_req >> 1) != gen;
+}
+
 // 录音开始前失败：上报 FAILED；令牌被拒时请网络任务清令牌并回到配对。
-static void report_failed(rb_fail_t reason)
+static void report_failed(uint32_t gen, rb_fail_t reason)
 {
     ESP_LOGW(TAG, "会话未能开始，原因 %d", (int)reason);
     if (reason == RB_FAIL_AUTH) rb_net_request_repair();
-    rb_bus_event(RB_EV_SESS_FAILED, reason, 0, 0, 500);
+    if (!cancelled(gen)) rb_bus_event(RB_EV_SESS_FAILED, reason, 0, 0, 500);
 }
 
-static void report_ended(rb_fail_t reason)
+static void report_ended(uint32_t gen, rb_fail_t reason)
 {
     ESP_LOGW(TAG, "录音异常结束，原因 %d", (int)reason);
     if (reason == RB_FAIL_AUTH) rb_net_request_repair();
-    rb_bus_event(RB_EV_SESS_ENDED, reason, 0, 0, 500);
+    if (!cancelled(gen)) rb_bus_event(RB_EV_SESS_ENDED, reason, 0, 0, 500);
+}
+
+static bool stop_requested(uint32_t gen)
+{
+    return s_stop_gen == gen;
 }
 
 // 把未发送的帧尽量发出去；遇到发送失败就停（链路断了，等重连）。
-static void drain_frames(esp_websocket_client_handle_t c, uint32_t *pending)
+static void drain_frames(esp_websocket_client_handle_t c, uint32_t *pending, uint32_t gen)
 {
     uint32_t seq;
     while (rb_audio_peek(s_tx_frame, &seq)) {
@@ -216,23 +239,46 @@ static void drain_frames(esp_websocket_client_handle_t c, uint32_t *pending)
                                               pdMS_TO_TICKS(SEND_TIMEOUT_MS));
         if (n != RB_ADPCM_FRAME_BYTES) break;
         rb_audio_mark_sent(seq);
-        // 发送期间到达的命令/事件不能丢：收集起来交给主循环。
+        // 发送期间到达的事件不能丢：收集起来交给主循环（命令看代号，不在位里）。
         uint32_t more = 0;
         if (xTaskNotifyWait(0, UINT32_MAX, &more, 0) == pdTRUE) *pending |= more;
-        if (*pending & (BIT_CMD_CANCEL | BIT_WS_DOWN)) break;
+        if (cancelled(gen) || (*pending & BIT_WS_DOWN)) break;
     }
 }
 
-// 一次完整的录音会话。返回时 websocket 客户端已销毁。
-static void run_session(void)
+// 一次完整的录音会话。返回时 websocket 客户端已销毁、采音已停止。
+// 笔记模式（design.md §3.4）：先开始采音再连服务器，帧从 seq 0 进环形缓冲；
+// started 之前收到的 stop 只停采音并记住，started 后把缓冲发完再发 stop、等 saved。
+static void run_session(uint32_t gen, rb_mode_t mode)
 {
+    const bool note = mode == RB_MODE_NOTE;
+    const int64_t t_begin = now_ms();
+    esp_websocket_client_handle_t c = NULL;
+    bool audio_on = false;        // 本会话打开过采音（cleanup 负责停止）
+    bool net_active = false;
+    char msg[160];
+    // 清掉上一次会话残留的事件位。命令（start/stop/cancel）按代号判断，不受影响。
+    uint32_t pending = 0;
+    (void)wait_bits(0);
+
+    if (note) {
+        // 按下即采音：codec 唤醒 + 打开通常 < 0.2 s，此后的语音全部进缓冲，开头不丢字。
+        if (rb_audio_start() != ESP_OK) {
+            report_failed(gen, RB_FAIL_AUDIO);
+            return;
+        }
+        audio_on = true;
+        ESP_LOGI(TAG, "笔记：已开始采音，后台连接服务器");
+    }
+
     char server[RB_SERVER_CAP];
     char token[RB_PROTO_TOKEN_MAX + 1];
     if (!rb_net_get_session_config(server, sizeof(server), token, sizeof(token))) {
-        report_failed(RB_FAIL_AUTH);   // 没有令牌：需要配对
-        return;
+        report_failed(gen, RB_FAIL_AUTH);   // 没有令牌：需要配对
+        goto cleanup;
     }
     rb_net_set_session_active(true);
+    net_active = true;
     snprintf(s_headers, sizeof(s_headers), "Authorization: Bearer %s\r\n", token);
     memset(token, 0, sizeof(token));
     (void)rb_url_ws(server, s_url, sizeof(s_url));
@@ -256,85 +302,126 @@ static void run_session(void)
         .pingpong_timeout_sec = 15,
         .enable_close_reconnect = true,   // 服务端正常关闭（如重启）后也自动重连
     };
-    esp_websocket_client_handle_t c = esp_websocket_client_init(&cfg);
+    c = esp_websocket_client_init(&cfg);
     if (!c) {
-        rb_net_set_session_active(false);
-        report_failed(RB_FAIL_UNREACHABLE);
-        return;
-    }
-    esp_websocket_register_events(c, WEBSOCKET_EVENT_ANY, ws_event, NULL);
-    // 清掉上一次会话残留的事件位，但保留初始化期间到达的取消命令（否则 UI 已回待机、
-    // 会话却继续连接并开始录音）。
-    uint32_t pending = wait_bits(0) & BIT_CMD_CANCEL;
-    bool live = false;
-
-    if (esp_websocket_client_start(c) != ESP_OK) {
-        report_failed(RB_FAIL_UNREACHABLE);
+        report_failed(gen, RB_FAIL_UNREACHABLE);
         goto cleanup;
     }
+    esp_websocket_register_events(c, WEBSOCKET_EVENT_ANY, ws_event, NULL);
+    // 初始化期间用户已取消（UI 已回待机）：不再连接。
+    if (cancelled(gen)) goto cleanup;
+
+    if (esp_websocket_client_start(c) != ESP_OK) {
+        report_failed(gen, RB_FAIL_UNREACHABLE);
+        goto cleanup;
+    }
+
+    // 笔记：started 之前用户松开 → 立刻停采音（计时已在 UI 冻结），稍后补发缓冲。
+    bool audio_released = false;
+#define NOTE_PRESTART_CHECKS()                                                        \
+    do {                                                                              \
+        if (note && !audio_released && stop_requested(gen)) {                         \
+            rb_audio_stop();                                                          \
+            audio_released = true;                                                    \
+            ESP_LOGI(TAG, "笔记：连上服务器前已松开，缓冲 %lu 帧",                      \
+                     (unsigned long)rb_audio_backlog());                              \
+        }                                                                             \
+        if (note && rb_audio_overflowed()) {                                          \
+            /* 缓冲装满（约 8 s）仍没连上：放弃本段，服务端还没有这条录音。 */        \
+            report_failed(gen, RB_FAIL_UNREACHABLE);                                       \
+            goto cleanup;                                                             \
+        }                                                                             \
+    } while (0)
 
     // ---- 1. 连接 ----
     int64_t deadline = now_ms() + CONNECT_TIMEOUT_MS;
     for (;;) {
         pending |= wait_bits(100);
-        if (pending & BIT_CMD_CANCEL) goto cleanup;
+        if (cancelled(gen)) goto cleanup;
         if (pending & BIT_WS_CONNECTED) break;
         if (pending & BIT_WS_HS_FAIL) {
             int st = s_hs_status;
             if (st == 401 || st == 403) {
-                report_failed(RB_FAIL_AUTH);
+                report_failed(gen, RB_FAIL_AUTH);
                 goto cleanup;
             }
             pending &= ~BIT_WS_HS_FAIL;   // 其他握手失败：继续重试到超时
         }
+        NOTE_PRESTART_CHECKS();
         if (now_ms() >= deadline) {
-            report_failed(RB_FAIL_UNREACHABLE);
+            report_failed(gen, RB_FAIL_UNREACHABLE);
             goto cleanup;
         }
     }
     pending &= ~BIT_WS_CONNECTED;
     rb_net_log_heap("ws connected");
 
+    // ---- 1b. 笔记：按住满 RB_PTT_MIN_MS 才发 start ----
+    // 误触（短按）会被 app 取消；在那之前不发 start，服务端就不会建这条录音（PRD R1.3）。
+    // 音频一直在缓冲里，推迟发 start 不丢字。松开（stop）也立即放行。
+    if (note) {
+        const int64_t gate = t_begin + RB_PTT_MIN_MS + PTT_GATE_MARGIN_MS;
+        while (now_ms() < gate && !stop_requested(gen)) {
+            pending |= wait_bits(50);
+            if (cancelled(gen)) goto cleanup;
+        }
+        NOTE_PRESTART_CHECKS();
+    }
+
     // ---- 2. start → started ----
-    char msg[160];
-    if (rb_proto_build_start(msg, sizeof(msg), RB_FW_VERSION) < 0 || !send_text(c, msg)) {
-        report_failed(RB_FAIL_UNREACHABLE);
+    if (rb_proto_build_start(msg, sizeof(msg), RB_FW_VERSION,
+                             note ? RB_PROTO_MODE_NOTE : RB_PROTO_MODE_MEETING) < 0 ||
+        !send_text(c, msg)) {
+        report_failed(gen, RB_FAIL_UNREACHABLE);
         goto cleanup;
     }
     deadline = now_ms() + STARTED_TIMEOUT_MS;
     for (;;) {
         pending |= wait_bits(100);
-        if (pending & BIT_CMD_CANCEL) goto cleanup;
+        if (cancelled(gen)) goto cleanup;
         if (pending & BIT_WS_STARTED) break;
         if (pending & BIT_WS_ERROR) {
-            report_failed(fail_from_error());
+            report_failed(gen, fail_from_error());
             goto cleanup;
         }
+        NOTE_PRESTART_CHECKS();
         if (now_ms() >= deadline) {
-            report_failed(RB_FAIL_UNREACHABLE);
+            report_failed(gen, RB_FAIL_UNREACHABLE);
             goto cleanup;
         }
     }
+#undef NOTE_PRESTART_CHECKS
     pending &= ~(BIT_WS_STARTED | BIT_WS_DOWN);
     char rec_id[RB_PROTO_ID_MAX + 1];
     taskENTER_CRITICAL(&s_mux);
     memcpy(rec_id, s_rx_rec_id, sizeof(rec_id));
     taskEXIT_CRITICAL(&s_mux);
     if (rec_id[0] == '\0') {
-        report_failed(RB_FAIL_SERVER);
+        report_failed(gen, RB_FAIL_SERVER);
         goto cleanup;
     }
 
-    // ---- 3. 开始采音 ----
-    if (rb_audio_start() != ESP_OK) {
-        // 服务端已建了录音：发 stop 让它收尾（空录音），再报麦克风失败。
-        if (rb_proto_build_stop(msg, sizeof(msg)) > 0) (void)send_text(c, msg);
-        report_failed(RB_FAIL_AUDIO);
-        goto cleanup;
+    // ---- 3. 开始采音（会议）/ 已在采音（笔记）----
+    if (note) {
+        if (rb_audio_overflowed()) {
+            // 极少见：恰在 started 到达前溢出。让服务端收尾（空录音），按连不上处理。
+            if (rb_proto_build_stop(msg, sizeof(msg)) > 0) (void)send_text(c, msg);
+            report_failed(gen, RB_FAIL_UNREACHABLE);
+            goto cleanup;
+        }
+    } else {
+        if (rb_audio_start() != ESP_OK) {
+            // 服务端已建了录音：发 stop 让它收尾（空录音），再报麦克风失败。
+            if (rb_proto_build_stop(msg, sizeof(msg)) > 0) (void)send_text(c, msg);
+            report_failed(gen, RB_FAIL_AUDIO);
+            goto cleanup;
+        }
+        audio_on = true;
     }
+    if (cancelled(gen)) goto cleanup;
     s_session_live = true;
-    live = true;
-    ESP_LOGI(TAG, "录音开始 %s", rec_id);
+    ESP_LOGI(TAG, "%s开始 %s，已缓冲 %lu 帧", note ? "笔记" : "录音", rec_id,
+             (unsigned long)rb_audio_backlog());
     rb_bus_event(RB_EV_SESS_STARTED, 0, 0, 0, 500);
     rb_net_log_heap("recording start");
 
@@ -350,12 +437,12 @@ static void run_session(void)
     for (;;) {
         pending |= wait_bits(50);
         int64_t now = now_ms();
-        if (pending & BIT_CMD_CANCEL) {
+        if (cancelled(gen)) {
             ESP_LOGW(TAG, "会话被取消");
             break;
         }
-        if ((pending & BIT_CMD_STOP) && !stopping) {
-            rb_audio_stop();   // 先停采音，最后一帧进入缓冲
+        if (stop_requested(gen) && !stopping) {
+            rb_audio_stop();   // 先停采音，最后一帧进入缓冲（笔记松开早于 started 时已停，幂等）
             stopping = true;
             flush_deadline = now + FLUSH_TIMEOUT_MS;
             ESP_LOGI(TAG, "用户结束录音，待上传 %lu 帧", (unsigned long)rb_audio_backlog());
@@ -399,11 +486,11 @@ static void run_session(void)
             taskEXIT_CRITICAL(&s_mux);
             ESP_LOGI(TAG, "已保存：%lld ms，%ld 句", (long long)dur, (long)n);
             rb_audio_stop();
-            rb_bus_event(RB_EV_SESS_SAVED, 0, dur, n, 500);
+            if (!cancelled(gen)) rb_bus_event(RB_EV_SESS_SAVED, 0, dur, n, 500);
             break;
         }
         if (pending & BIT_WS_ERROR) {
-            report_ended(fail_from_error());   // resume_failed / not_recording / auth 等
+            report_ended(gen, fail_from_error());   // resume_failed / not_recording / auth 等
             break;
         }
         pending = 0;
@@ -411,14 +498,14 @@ static void run_session(void)
         if (!stopping && rb_audio_overflowed()) {
             // 断网超过缓存时长：本次录音结束，服务端把已收部分存为 interrupted。
             rb_audio_stop();
-            report_ended(RB_FAIL_OVERFLOW);
+            report_ended(gen, RB_FAIL_OVERFLOW);
             break;
         }
         if (resume_pending && now >= resume_deadline) {
-            report_ended(RB_FAIL_SERVER);
+            report_ended(gen, RB_FAIL_SERVER);
             break;
         }
-        if (link_ok) drain_frames(c, &pending);
+        if (link_ok) drain_frames(c, &pending, gen);
         if (stopping && link_ok && !stop_sent && rb_audio_backlog() == 0) {
             if (rb_proto_build_stop(msg, sizeof(msg)) > 0 && send_text(c, msg)) {
                 stop_sent = true;
@@ -426,11 +513,11 @@ static void run_session(void)
             }
         }
         if (stop_sent && now >= saved_deadline) {
-            report_ended(RB_FAIL_SAVE_TIMEOUT);
+            report_ended(gen, RB_FAIL_SAVE_TIMEOUT);
             break;
         }
         if (stopping && !stop_sent && now >= flush_deadline) {
-            report_ended(RB_FAIL_OVERFLOW);   // 链路一直没恢复：已上传部分由服务端存为 interrupted
+            report_ended(gen, RB_FAIL_OVERFLOW);   // 链路一直没恢复：已上传部分由服务端存为 interrupted
             break;
         }
         if (now >= next_heap_log) {
@@ -443,22 +530,28 @@ static void run_session(void)
 
 cleanup:
     s_session_live = false;
-    if (live) rb_audio_stop();
+    if (audio_on) rb_audio_stop();
     // enable_close_reconnect 下 close() 不阻塞且会自动重连，因此直接 destroy（内部先 stop）。
-    esp_websocket_client_destroy(c);
-    rb_net_set_session_active(false);
-    (void)wait_bits(0);
+    if (c) esp_websocket_client_destroy(c);
+    if (net_active) rb_net_set_session_active(false);
+    (void)wait_bits(0);   // 只清事件位；收尾期间到达的新 start 记在 s_req 里，不会丢
     rb_net_log_heap("session end");
 }
 
 static void session_task(void *arg)
 {
     (void)arg;
+    uint32_t last_gen = 0;
     for (;;) {
-        uint32_t bits = 0;
-        xTaskNotifyWait(0, UINT32_MAX, &bits, portMAX_DELAY);
-        // START 与 CANCEL 同时到达：用户在任务醒来前已取消，不再开始会话。
-        if ((bits & BIT_CMD_START) && !(bits & BIT_CMD_CANCEL)) run_session();
+        uint32_t req = s_req;
+        uint32_t gen = req >> 1;
+        if (gen != last_gen) {
+            last_gen = gen;
+            // start 之后、任务醒来之前用户已取消：不再开始会话。
+            if (!cancelled(gen)) run_session(gen, (req & 1u) ? RB_MODE_NOTE : RB_MODE_MEETING);
+            continue;   // 会话期间可能又来了新的 start：回到循环顶部再检查
+        }
+        (void)xTaskNotifyWait(0, UINT32_MAX, NULL, portMAX_DELAY);
     }
 }
 
@@ -473,18 +566,24 @@ esp_err_t rb_session_init(void)
     return rb_audio_init(s_task);
 }
 
-void rb_session_start(void)
+// 下面三个接口只在 app 任务中调用（单写者）：先写代号/模式，再发通知位唤醒会话任务。
+void rb_session_start(rb_mode_t mode)
 {
+    uint32_t gen = ((s_req >> 1) + 1u) & 0x7FFFFFFFu;
+    if (gen == 0) gen = 1;   // 0 留给“从未 stop/cancel”
+    s_req = (gen << 1) | (mode == RB_MODE_NOTE ? 1u : 0u);
     notify(BIT_CMD_START);
 }
 
 void rb_session_stop(void)
 {
+    s_stop_gen = s_req >> 1;
     notify(BIT_CMD_STOP);
 }
 
 void rb_session_cancel(void)
 {
+    s_cancel_gen = s_req >> 1;
     notify(BIT_CMD_CANCEL);
 }
 

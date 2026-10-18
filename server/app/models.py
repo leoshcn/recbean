@@ -29,6 +29,18 @@ class SpeakerPatch(BaseModel):
     name: str = Field(min_length=1, max_length=64)
 
 
+class HotwordsAdd(BaseModel):
+    words: list[str] = Field(min_length=1, max_length=1000)
+
+
+class HotwordPatch(BaseModel):
+    word: str = Field(max_length=200)
+
+
+class HotwordOrder(BaseModel):
+    ids: list[int] = Field(max_length=10000)
+
+
 class SpeakerMerge(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

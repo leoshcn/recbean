@@ -2,7 +2,9 @@
 //
 // 协议定义见 .trellis/tasks/10-18-recbean-mvp/design.md §3：
 //   设备 → 服务（文本帧）
-//     {"type":"start","sample_rate":16000,"ch":1,"codec":"ima_adpcm","fw":"x.y.z"}
+//     {"type":"start","sample_rate":16000,"ch":1,"codec":"ima_adpcm","fw":"x.y.z","mode":"note|meeting"}
+//       mode（10-18-dual-mode-notes-meeting）：note = 录音笔记（服务端关闭说话人区分，按天汇总），
+//       meeting = 会议录音。服务端缺省或不认识的值按 meeting 处理（兼容老固件）。
 //     {"type":"stop"}
 //     {"type":"resume","recording_id":"..","next_seq":N}
 //   服务 → 设备（文本帧）
@@ -32,6 +34,9 @@
 #define RB_PROTO_CODE_MAX   23     // error.code 最大字节数
 #define RB_PROTO_TOKEN_MAX  127    // 设备令牌最大字节数（ASCII 可见字符）
 #define RB_PROTO_PAIR_CODE  4      // 配对码位数
+
+#define RB_PROTO_MODE_NOTE     "note"      // start.mode：录音笔记
+#define RB_PROTO_MODE_MEETING  "meeting"   // start.mode：会议录音
 
 typedef enum {
     RB_MSG_UNKNOWN = 0,   // 合法 JSON 但 type 不认识：调用方忽略即可
@@ -74,7 +79,8 @@ typedef struct {
 bool rb_proto_parse(const char *json, size_t len, rb_msg_t *out);
 
 // 构造设备→服务消息。成功返回写入长度（不含 NUL），缓冲不足或参数非法返回 -1。
-int rb_proto_build_start(char *buf, size_t cap, const char *fw_version);
+// start 的 mode 只接受 RB_PROTO_MODE_NOTE / RB_PROTO_MODE_MEETING，其他值返回 -1。
+int rb_proto_build_start(char *buf, size_t cap, const char *fw_version, const char *mode);
 int rb_proto_build_stop(char *buf, size_t cap);
 int rb_proto_build_resume(char *buf, size_t cap, const char *recording_id, uint32_t next_seq);
 int rb_proto_build_pair_request(char *buf, size_t cap, const char *device_id);

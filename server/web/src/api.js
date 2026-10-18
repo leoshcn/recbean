@@ -21,7 +21,16 @@ async function request(method, url, body) {
 const enc = encodeURIComponent
 
 export const api = {
-  listRecordings: () => request('GET', '/api/recordings'),
+  listRecordings: (kind) =>
+    request('GET', kind ? `/api/recordings?kind=${enc(kind)}` : '/api/recordings'),
+  listNoteDays: () => request('GET', '/api/notes/days'),
+  getNoteDay: (date) => request('GET', `/api/notes/days/${enc(date)}`),
+  noteDayExportUrl: (date) => `/api/notes/days/${enc(date)}/export.txt`,
+  listHotwords: () => request('GET', '/api/hotwords'),
+  addHotwords: (words) => request('POST', '/api/hotwords', { words }),
+  updateHotword: (id, word) => request('PATCH', `/api/hotwords/${id}`, { word }),
+  deleteHotword: (id) => request('DELETE', `/api/hotwords/${id}`),
+  reorderHotwords: (ids) => request('PUT', '/api/hotwords/order', { ids }),
   getRecording: (id) => request('GET', `/api/recordings/${enc(id)}`),
   updateTitle: (id, title) => request('PATCH', `/api/recordings/${enc(id)}`, { title }),
   deleteRecording: (id) => request('DELETE', `/api/recordings/${enc(id)}`),
