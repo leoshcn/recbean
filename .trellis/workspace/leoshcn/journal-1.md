@@ -50,3 +50,24 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 录音笔记/会议录音双模式与共享热词
+
+**Date**: 2026-10-18
+**Task**: 录音笔记/会议录音双模式与共享热词
+**Branch**: `feature/dual-mode-notes-meeting`
+
+### Summary
+
+设备按住上键记笔记、单击确定录会议；服务端按 kind 区分并按天聚合笔记，笔记关闭说话人区分；网页新增笔记/会议/热词入口；热词共享并经真实接口实测。服务端已部署测试机，固件应用分区烧录（保留 NVS），真机 AC1-AC5 通过。PR #2。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f29f5b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
