@@ -1,0 +1,11 @@
+services:
+  recbean:
+    build: ./server
+    image: recbean:latest
+    container_name: recbean
+    ports:
+      - "8090:8080"   # host 8080 is taken by another service on the test machine
+    volumes:
+      - ./data:/data
+    env_file: .env
+    restart: unless-stopped

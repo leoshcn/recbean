@@ -1,0 +1,62 @@
+# --- 目标芯片 ---
+CONFIG_IDF_TARGET="esp32c3"
+# 注:ESP32-C3 无 PSRAM,故不设 CONFIG_SPIRAM。
+
+# --- Flash ---
+# FoloToy AI Passport 当前产品/固件基线使用 8MB Flash。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 固定 8MB 镜像头，关闭 detect，便于 idf.py merge-bin。
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+# 默认模板只保留 NVS、PHY data 和占用剩余空间的 factory app；用户可按需修改。
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- 控制台:USB-Serial-JTAG(C3 原生 USB,GPIO18/19)---
+# 不用 UART0:其默认 TX=GPIO21 与本板背光引脚冲突。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- LVGL ---
+CONFIG_LV_COLOR_DEPTH_16=y
+# 20 ms display refresh period targets up to 50 FPS when rendering and SPI
+# transfer complete within the same budget.
+CONFIG_LV_DEF_REFR_PERIOD=20
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+# RecBean：录音计时/结束页图标用 28，配对码与待机页麦克风图标用 40（仅 ASCII + LV_SYMBOL）。
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
+# 中文用 assets/fonts/recbean_font_16.c（GB2312 子集，见 assets/README.md）。
+# 文本按 UTF-8 解码；缺字保留占位框，不关掉占位来掩盖缺字。
+CONFIG_LV_TXT_ENC_UTF8=y
+CONFIG_LV_USE_FONT_PLACEHOLDER=y
+# LVGL 用 C 库 malloc（系统堆），不用独立的内置池。真机实测：32KB 内置池被约 120 个
+# 对象占满后，配网页绘制时 lv_draw_add_task 分配失败，LV_ASSERT_MALLOC 死循环触发
+# task_wdt（taskLVGL 占满 CPU）。改用系统堆后对象与绘制任务和 Wi-Fi 共享同一块堆，
+# 静态区同时减少 32KB。参见 docs/reference/y2lin/meter-ui-smoothing-and-layout.zh_CN.md。
+CONFIG_LV_USE_CLIB_MALLOC=y
+
+# --- 系统 ---
+CONFIG_FREERTOS_HZ=1000
+
+# --- Bluetooth ---
+# RecBean 只用 Wi-Fi（SoftAP 配网 + STA 上传），关闭蓝牙控制器，把内部 RAM 留给
+# Wi-Fi、WebSocket、LVGL 与 80 KB 断网缓存。
+CONFIG_BT_ENABLED=n
+
+# --- 网络 ---
+# 配网页的手机浏览器请求头较长（Cookie/UA），默认 512 B 可能触发 431。
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# --- 内部 RAM 预算（ESP32-C3 无 PSRAM；IRAM 与 DRAM 共用同一块 SRAM）---
+# RecBean 的 .bss 比基线多约 70 KB（80 KB 断网缓存等），因此把非实时关键的代码移出 IRAM：
+# Wi-Fi 收发热路径（上传仅 ~8 KB/s，不需要 IRAM 加速）、堆函数（无 ISR 内分配）、
+# SPI master ISR（屏幕刷新在 Flash 写入期间推迟即可）。FreeRTOS 仍留在 IRAM。
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_HEAP_PLACE_FUNCTION_INTO_FLASH=y
+CONFIG_SPI_MASTER_ISR_IN_IRAM=n
+CONFIG_LOG_IN_IRAM=n
+# Wi-Fi 静态接收缓冲 10 → 6（每个 ~1.6 KB 堆）：局域网低码率上传足够。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6

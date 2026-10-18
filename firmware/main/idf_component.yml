@@ -1,0 +1,9 @@
+## RecBean 应用组件依赖。BSP 的依赖（LVGL、esp_lvgl_port、button、esp_codec_dev）
+## 在 components/bsp/idf_component.yml；这里只加应用自己用到的。
+dependencies:
+  idf: ">=5.5.3,<5.6.0"
+  # 设备 ↔ 服务 WebSocket（ws://<server>/device/ws），带 Authorization 头与自动重连。
+  espressif/esp_websocket_client: "^1.4.0"
+  # 只因新增上面的依赖而触发重新求解时，组件管理器会把 BSP 的 "^9.5.0" 升到更新的
+  # LVGL。文档与字库按 9.5.0 验证，这里显式锁住，避免顺带升级。
+  lvgl/lvgl: "9.5.0"
