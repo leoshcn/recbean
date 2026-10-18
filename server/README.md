@@ -2,7 +2,7 @@
 
 FastAPI + SQLite. One port (8080 in the container, published as host 8090 by
 `docker-compose.yml`) serves the device WebSocket, the REST API and the
-built Vue 3 Web UI. Design: `.trellis/tasks/10-18-recbean-mvp/design.md` §3–§6.
+built Vue 3 Web UI. Design: `.trellis/tasks/archive/2026-10/10-18-recbean-mvp/design.md` §3–§6.
 
 ## Develop / test
 
@@ -18,10 +18,17 @@ cd web && npm ci && npm run build   # output web/dist, served by the server
 
 ## Deploy (test machine)
 
+Use the one-command script from the repo root (details in the root `README.md`):
+
 ```bash
-cp .env.example .env    # fill DOUBAO_* on the server only
-docker compose up -d --build
-python3 server/tools/fake_device.py --host 127.0.0.1:8090 --auto-confirm --wav two_speakers.wav
+./deploy.sh              # package, upload, keep recbean:prev, rebuild, health check
+./deploy.sh --rollback   # back to recbean:prev
+```
+
+Smoke test against the deployed server:
+
+```bash
+python3 server/tools/fake_device.py --host 192.168.2.144:8090 --auto-confirm --wav two_speakers.wav
 ```
 
 ## Device-facing contract (summary)

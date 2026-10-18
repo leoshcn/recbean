@@ -25,6 +25,7 @@
 
 ## Test machine deployment (192.168.2.144, `/root/recbean`)
 
+- Deploy with `./deploy.sh` from the repo root (run under Git Bash on Windows): packages `server/`, keeps the previous image as `recbean:prev`, rebuilds, health-checks; `--rollback` / `--status`. Remote extract needs `tar --no-same-owner` (Windows-built archives carry uid 197609) and must not hide failures behind `&&` under `set -e`.
 - SSH with the local key works (`C:/Windows/System32/OpenSSH/ssh.exe` / `scp.exe`); no password needed.
 - Host port **8090** → container 8080 (host 8080 belongs to another stack, `expense-gauge`; never touch it).
 - Package with Windows `C:/Windows/System32/tar.exe` (brush's builtin `tar` lacks `--exclude`), excluding `.venv node_modules dist .pytest_cache __pycache__ .localdata`; never ship `.env` or `data/`.
