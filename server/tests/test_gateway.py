@@ -194,7 +194,8 @@ def test_disconnect_without_resume_marks_interrupted(make_client):
         assert ws.receive_json()["code"] == "resume_failed"
 
 
-@pytest.mark.parametrize("factory", [lambda: FakeAsr(fail_after=2), UnconfiguredAsrEngine],
+@pytest.mark.parametrize("factory", [lambda kind, hw: FakeAsr(kind, hw, fail_after=2),
+                                     UnconfiguredAsrEngine],
                          ids=["asr_fails_midway", "asr_unconfigured"])
 def test_asr_failure_keeps_audio(make_client, factory):
     client = make_client(asr_factory=factory)
@@ -237,3 +238,57 @@ def test_restart_recovers_unfinished_recording(tmp_path):
         assert rec["status"] == "interrupted" and rec["duration_ms"] == 600
     with wave.open(str(wav_path)) as w:
         assert w.getnframes() == 600 * 16
+
+
+def record(client, token, start, n_frames=12):
+    with client.websocket_connect("/device/ws", headers=auth(token)) as ws:
+        ws.send_json(start)
+        rec_id = ws.receive_json()["recording_id"]
+        for f in tone_frames(n_frames):
+            ws.send_bytes(f)
+        ws.send_json({"type": "stop"})
+        msgs = collect_until(ws, "saved")
+    return rec_id, msgs
+
+
+@pytest.mark.parametrize("mode", [None, "meeting", "bogus", 1])
+def test_start_without_or_unknown_mode_is_meeting(client, mode):
+    token = pair(client)
+    start = dict(START) if mode is None else {**START, "mode": mode}
+    rec_id, msgs = record(client, token, start)
+    rec = client.get(f"/api/recordings/{rec_id}").json()
+    assert rec["kind"] == "meeting"
+    assert rec["title"].startswith("会议 ")
+    assert FakeAsr.calls[-1] == ("meeting", [])
+    finals = [m for m in msgs if m["type"] == "final"]
+    assert [m["speaker"] for m in finals] == [1, 2, 1]  # diarization kept
+
+
+def test_note_mode_single_speaker_and_title(client):
+    token = pair(client)
+    rec_id, msgs = record(client, token, {**START, "mode": "note"})
+    assert FakeAsr.calls[-1][0] == "note"
+    finals = [m for m in msgs if m["type"] == "final"]
+    assert len(finals) == 3 and {m["speaker"] for m in finals} == {1}
+    rec = client.get(f"/api/recordings/{rec_id}").json()
+    assert rec["kind"] == "note" and rec["title"].startswith("笔记 ")
+    assert rec["speaker_count"] == 1
+    assert [s["idx"] for s in rec["speakers"]] == [1]
+    assert {s["speaker_idx"] for s in rec["sentences"]} == {1}
+
+
+def test_hotwords_snapshot_at_start(client):
+    token = pair(client)
+    client.post("/api/hotwords", json={"words": ["录音豆", "豆包"]})
+    with client.websocket_connect("/device/ws", headers=auth(token)) as ws:
+        ws.send_json({**START, "mode": "note"})
+        ws.receive_json()
+        # edits while recording only affect later recordings
+        client.post("/api/hotwords", json={"words": ["火山引擎"]})
+        for f in tone_frames(3):
+            ws.send_bytes(f)
+        ws.send_json({"type": "stop"})
+        collect_until(ws, "saved")
+    assert FakeAsr.calls[-1] == ("note", ["录音豆", "豆包"])
+    record(client, token, START, 3)
+    assert FakeAsr.calls[-1] == ("meeting", ["录音豆", "豆包", "火山引擎"])

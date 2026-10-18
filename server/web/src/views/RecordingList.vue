@@ -1,12 +1,12 @@
 <template>
   <div>
     <div class="row" style="margin-bottom: 12px">
-      <h2 style="margin: 0">录音列表</h2>
+      <h2 style="margin: 0">会议录音</h2>
       <span class="spacer" />
       <button @click="load">刷新</button>
     </div>
     <p v-if="error" class="error">加载失败：{{ error }}</p>
-    <div v-if="loaded && !items.length" class="card empty">还没有录音。在设备上单击“确定”开始录音。</div>
+    <div v-if="loaded && !items.length" class="card empty">还没有会议录音。在设备上单击“确定”开始。</div>
     <div v-for="r in items" :key="r.id" class="card item" @click="open(r)">
       <div class="row">
         <strong class="title">{{ r.title }}</strong>
@@ -39,7 +39,7 @@ let timer = null
 
 async function load() {
   try {
-    items.value = await api.listRecordings()
+    items.value = await api.listRecordings('meeting')
     error.value = ''
   } catch (e) {
     error.value = e.message

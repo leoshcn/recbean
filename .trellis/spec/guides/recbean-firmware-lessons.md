@@ -20,6 +20,15 @@
 - Opening the port does not reset; to capture boot logs, toggle RTS and re-write DTR (`s.rts=True; s.dtr=s.dtr; …`) — Windows usbser only applies RTS after a DTR write.
 - Python file writes are buffered: a long background capture is unreadable until it ends.
 - Every flash needs the user's consent for that exact image hash; verify with `tools/archive_firmware.py verify <archive>` first.
+- The merged image at `0x0` pads over NVS (`0x9000`), wiping Wi-Fi, server address and pairing token. When `partitions.csv`/`sdkconfig.defaults` are unchanged, flash only the archive's `FoloToy-AI-Passport.bin` at `0x10000` to keep settings — tell the user which one before asking consent.
+- A single long serial capture can die when the USB port blips; reopen on `SerialException` and append to the log (the 2026-10-18 capture script lived in `firmware/build/cap.py`).
+- `./deploy.sh` is not runnable from the brush shell (`%1 is not a valid Win32 application`); run it via `"C:/Program Files/Git/bin/bash.exe" ./deploy.sh`.
+
+## Push-to-talk notes (2026-10-18, dual-mode task)
+
+- Up-key hold detection via `BSP_BTN_RELEASE` (`BUTTON_PRESS_UP`) was reliable on the real board; the TICK-based fallback in `main.c:check_ptt_release` (up-key window `[0,150)` mV, 2 consecutive misses) never fired during acceptance.
+- Note mode starts audio before the WebSocket connects; typical connect + start is ~0.8 s and ~4 frames are already buffered when `started` arrives (log `笔记开始 …，已缓冲 4 帧`). A quick tap shows only `笔记：已开始采音` with no `笔记开始` line — `start` is deferred until 600+150 ms so no server record is created.
+- Heap: `min_free` dropped to ~39.5 KB after several note + meeting sessions (was ~47.8 KB at first ws connect). Still fine, but recheck before growing buffers.
 
 ## Known noise
 

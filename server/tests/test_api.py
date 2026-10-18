@@ -1,4 +1,7 @@
+import sqlite3
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -195,3 +198,131 @@ def test_cannot_merge_speakers_live(client):
         ws.send_json({"type": "stop"})
         collect_until(ws, "saved")
     assert client.get(f"/api/recordings/{rec_id}").json()["speaker_count"] == 2
+
+
+# ---- kind / notes -----------------------------------------------------------
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def local_ms(*args, tz=SHANGHAI) -> int:
+    return int(datetime(*args, tzinfo=tz).timestamp() * 1000)
+
+
+def add_rec(store, rec_id, started_at, texts, kind="note", duration_ms=1000):
+    store.create_recording(rec_id, f"t-{rec_id}", "dev", "", kind=kind, started_at=started_at)
+    for i, t in enumerate(texts):
+        store.add_sentence(rec_id, 1, i * 1000, i * 1000 + 900, t)
+    store.update_recording(rec_id, status="done", duration_ms=duration_ms)
+
+
+def test_migration_adds_kind_to_old_database(tmp_path):
+    from app.store import Store
+
+    db = tmp_path / "old.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE recording (id TEXT PRIMARY KEY, title TEXT NOT NULL, device_id TEXT,
+            started_at INTEGER NOT NULL, duration_ms INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL, audio_path TEXT, error TEXT);
+        INSERT INTO recording(id, title, started_at, status) VALUES ('old1', '录音 10-01', 1, 'done');
+    """)
+    con.commit()
+    con.close()
+    store = Store(db)
+    try:
+        assert store.get_recording("old1")["kind"] == "meeting"
+        assert [r["id"] for r in store.list_recordings("meeting")] == ["old1"]
+        assert store.list_recordings("note") == []
+        store.create_recording("new1", "笔记", "dev", "", kind="note")
+        assert [r["id"] for r in store.list_recordings("note")] == ["new1"]
+    finally:
+        store.close()
+    Store(db).close()  # re-opening an already migrated database is a no-op
+
+
+def test_kind_filter(client):
+    token = pair(client)
+    ids = {}
+    for mode in ("note", "meeting"):
+        with client.websocket_connect("/device/ws",
+                                      headers={"Authorization": f"Bearer {token}"}) as ws:
+            ws.send_json({**START, "mode": mode})
+            ids[mode] = ws.receive_json()["recording_id"]
+            ws.send_json({"type": "stop"})
+            collect_until(ws, "saved")
+    all_ = client.get("/api/recordings").json()
+    assert {r["id"]: r["kind"] for r in all_} == {ids["note"]: "note",
+                                                  ids["meeting"]: "meeting"}
+    assert [r["id"] for r in client.get("/api/recordings?kind=note").json()] == [ids["note"]]
+    assert [r["id"] for r in client.get("/api/recordings?kind=meeting").json()] == [
+        ids["meeting"]]
+    assert client.get("/api/recordings?kind=bad").status_code == 422
+
+
+def test_note_days_group_by_local_date(client):
+    store = client.app.state.store
+    # 23:59:30 on the 17th and 00:00:30 on the 18th in Asia/Shanghai are both the 17th in UTC
+    add_rec(store, "a", local_ms(2026, 10, 17, 23, 59, 30), ["昨天最后一句。"], duration_ms=1500)
+    add_rec(store, "b", local_ms(2026, 10, 18, 0, 0, 30), ["今天", "第一段。"], duration_ms=2000)
+    add_rec(store, "c", local_ms(2026, 10, 18, 9, 5), ["第二段。"], duration_ms=3000)
+    add_rec(store, "m", local_ms(2026, 10, 18, 10, 0), ["会议的话。"], kind="meeting")
+    add_rec(store, "e", local_ms(2026, 10, 16, 8, 0), [])
+    days = client.get("/api/notes/days").json()
+    assert days == [
+        {"date": "2026-10-18", "count": 2, "duration_ms": 5000, "first_text": "今天第一段。",
+         "live": False},
+        {"date": "2026-10-17", "count": 1, "duration_ms": 1500, "first_text": "昨天最后一句。",
+         "live": False},
+        {"date": "2026-10-16", "count": 1, "duration_ms": 1000, "first_text": "",
+         "live": False},
+    ]
+
+    day = client.get("/api/notes/days/2026-10-18").json()
+    assert day["date"] == "2026-10-18"
+    segs = day["segments"]
+    assert [s["id"] for s in segs] == ["b", "c"]
+    assert [s["time"] for s in segs] == ["00:00", "09:05"]
+    assert [x["text"] for x in segs[0]["sentences"]] == ["今天", "第一段。"]
+    assert segs[0]["live"] is False and segs[0]["status"] == "done"
+    assert [s["id"] for s in client.get("/api/notes/days/2026-10-17").json()["segments"]] == ["a"]
+    assert client.get("/api/notes/days/2026-10-19").json()["segments"] == []
+    assert client.get("/api/notes/days/2026-13-01").status_code == 422
+    assert client.get("/api/notes/days/yesterday").status_code == 422
+
+
+def test_note_days_follow_configured_timezone(make_client):
+    client = make_client(timezone="UTC")
+    store = client.app.state.store
+    add_rec(store, "a", local_ms(2026, 10, 17, 23, 59, 30), ["x"])
+    add_rec(store, "b", local_ms(2026, 10, 18, 0, 0, 30), ["y"])
+    days = client.get("/api/notes/days").json()
+    assert [(d["date"], d["count"]) for d in days] == [("2026-10-17", 2)]
+    segs = client.get("/api/notes/days/2026-10-17").json()["segments"]
+    assert [s["time"] for s in segs] == ["15:59", "16:00"]
+
+
+def test_note_day_export_txt(client):
+    store = client.app.state.store
+    add_rec(store, "b", local_ms(2026, 10, 18, 8, 3), ["买牛奶，", "还有鸡蛋。"])
+    add_rec(store, "e", local_ms(2026, 10, 18, 9, 0), [])  # empty segment is skipped
+    add_rec(store, "c", local_ms(2026, 10, 18, 14, 30), ["下午三点开会。"])
+    r = client.get("/api/notes/days/2026-10-18/export.txt")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert "attachment" in r.headers["content-disposition"]
+    assert r.text == "笔记 2026-10-18\n\n08:03 买牛奶，还有鸡蛋。\n14:30 下午三点开会。\n"
+
+
+def test_note_day_live_segment(client):
+    token = pair(client)
+    with client.websocket_connect("/device/ws",
+                                  headers={"Authorization": f"Bearer {token}"}) as ws:
+        ws.send_json({**START, "mode": "note"})
+        rec_id = ws.receive_json()["recording_id"]
+        days = client.get("/api/notes/days").json()
+        assert days[0]["live"] is True
+        seg = client.get(f"/api/notes/days/{days[0]['date']}").json()["segments"][0]
+        assert seg["id"] == rec_id and seg["live"] is True
+        ws.send_json({"type": "stop"})
+        collect_until(ws, "saved")

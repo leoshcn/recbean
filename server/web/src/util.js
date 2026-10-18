@@ -13,6 +13,20 @@ export function fmtTime(epochMs) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+// browser-local "YYYY-MM-DD" (same as the server's TZ_NAME day in the usual setup)
+export function todayStr() {
+  return fmtTime(Date.now()).slice(0, 10)
+}
+
+const WEEKDAYS =['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+// "2026-10-18" -> "2026-10-18 周日"（日期字符串由服务端按其时区给出，这里只算星期）
+export function fmtDay(date) {
+  const [y, m, d] = String(date).split('-').map(Number)
+  const wd = new Date(Date.UTC(y, (m || 1) - 1, d || 1)).getUTCDay()
+  return Number.isNaN(wd) ? date : `${date} ${WEEKDAYS[wd]}`
+}
+
 export const STATUS_TEXT = {
   recording: '录音中',
   done: '已完成',

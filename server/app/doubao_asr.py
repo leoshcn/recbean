@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Optional
 
 from .asr import AsrError, AsrEvent, Emit, FinalEvent, PartialEvent
+from .hotwords import corpus_context
 
 log = logging.getLogger("recbean.doubao")
 
@@ -187,16 +188,26 @@ def decode_server_message(buf: bytes) -> ServerMessage:
     return msg
 
 
-def build_request_params(uid: str = "recbean", extra_request: Optional[dict] = None) -> dict:
-    request = {
+def build_request_params(
+    uid: str = "recbean",
+    extra_request: Optional[dict] = None,
+    speaker_info: bool = True,
+    hotwords: Optional[list[str]] = None,
+) -> dict:
+    """Full client request. ``speaker_info=False`` (note mode) turns diarization off;
+    non-empty ``hotwords`` are sent inline as ``request.corpus.context``."""
+    request: dict = {
         "model_name": "bigmodel",
         "enable_punc": True,
         "enable_itn": True,
-        "enable_speaker_info": True,
-        "ssd_version": "200",
+        "enable_speaker_info": speaker_info,
         "enable_nonstream": True,
         "show_utterances": True,
     }
+    if speaker_info:
+        request["ssd_version"] = "200"
+    if hotwords:
+        request["corpus"] = {"context": corpus_context(list(hotwords))}
     if extra_request:
         request.update(extra_request)
     return {
@@ -297,6 +308,8 @@ class DoubaoConfig:
     uid: str = "recbean"
     extra_request: dict = field(default_factory=dict)
     open_timeout: float = 10.0
+    speaker_info: bool = True
+    hotwords: list = field(default_factory=list)
 
 
 def build_auth_headers(cfg: DoubaoConfig, connect_id: str) -> dict:
@@ -384,8 +397,11 @@ class DoubaoAsrEngine:
         tracker = ResultTracker()
         sender: Optional[asyncio.Task] = None
         try:
+            log.info("doubao request speaker_info=%s hotwords=%d logid=%s",
+                     self.cfg.speaker_info, len(self.cfg.hotwords), self.logid)
             await ws.send(encode_full_client_request(build_request_params(
-                self.cfg.uid, self.cfg.extra_request), seq=1))
+                self.cfg.uid, self.cfg.extra_request, speaker_info=self.cfg.speaker_info,
+                hotwords=self.cfg.hotwords), seq=1))
             sender = asyncio.create_task(self._send_audio(ws, audio, seq=2))
             got_last = False
             try:
@@ -427,10 +443,11 @@ class DoubaoAsrEngine:
             await ws.close()
 
 
-def engine_factory_from_settings(settings) -> Callable[[], Any]:
+def engine_factory_from_settings(settings) -> Callable[..., Any]:
+    """``factory(kind, hotwords)``: note recordings run without speaker diarization."""
     from .asr import UnconfiguredAsrEngine
 
-    def factory():
+    def factory(kind: str = "meeting", hotwords: Optional[list[str]] = None):
         if not settings.doubao_configured:
             return UnconfiguredAsrEngine()
         return DoubaoAsrEngine(
@@ -440,6 +457,8 @@ def engine_factory_from_settings(settings) -> Callable[[], Any]:
                 app_key=settings.doubao_app_key,
                 access_key=settings.doubao_access_key,
                 api_key=settings.doubao_api_key,
+                speaker_info=(kind != "note"),
+                hotwords=list(hotwords or []),
             )
         )
 

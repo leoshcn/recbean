@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS recording (
     duration_ms INTEGER NOT NULL DEFAULT 0,
     status      TEXT NOT NULL,             -- recording|done|asr_error|interrupted
     audio_path  TEXT,
-    error       TEXT
+    error       TEXT,
+    kind        TEXT NOT NULL DEFAULT 'meeting'   -- meeting|note
 );
 CREATE TABLE IF NOT EXISTS speaker (
     recording_id TEXT NOT NULL REFERENCES recording(id) ON DELETE CASCADE,
@@ -42,7 +43,20 @@ CREATE TABLE IF NOT EXISTS device (
     paired_at  INTEGER NOT NULL,
     name       TEXT
 );
+CREATE TABLE IF NOT EXISTS hotword (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    word       TEXT NOT NULL UNIQUE,
+    position   INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
 """
+
+# Run after migrations: may reference columns added by ALTER TABLE.
+POST_MIGRATION = """
+CREATE INDEX IF NOT EXISTS recording_kind ON recording(kind, started_at);
+"""
+
+KINDS = ("meeting", "note")
 
 STATUSES = ("recording", "done", "asr_error", "interrupted")
 
@@ -64,6 +78,16 @@ class Store:
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(SCHEMA)
+        self._migrate()
+        self._db.executescript(POST_MIGRATION)
+
+    def _migrate(self) -> None:
+        cols = {r["name"] for r in self._db.execute("PRAGMA table_info(recording)").fetchall()}
+        if "kind" not in cols:
+            # Recordings made before the note mode existed are all meetings.
+            self._db.execute(
+                "ALTER TABLE recording ADD COLUMN kind TEXT NOT NULL DEFAULT 'meeting'"
+            )
 
     def close(self) -> None:
         with self._lock:
@@ -101,11 +125,15 @@ class Store:
         return self._exec("DELETE FROM device WHERE id=?", (device_id,)).rowcount > 0
 
     # ---- recordings ----------------------------------------------------
-    def create_recording(self, rec_id: str, title: str, device_id: str, audio_path: str) -> None:
+    def create_recording(
+        self, rec_id: str, title: str, device_id: str, audio_path: str, kind: str = "meeting",
+        started_at: Optional[int] = None,
+    ) -> None:
         self._exec(
-            "INSERT INTO recording(id, title, device_id, started_at, status, audio_path) "
-            "VALUES (?,?,?,?, 'recording', ?)",
-            (rec_id, title, device_id, now_ms(), audio_path),
+            "INSERT INTO recording(id, title, device_id, started_at, status, audio_path, kind) "
+            "VALUES (?,?,?,?, 'recording', ?, ?)",
+            (rec_id, title, device_id, now_ms() if started_at is None else started_at,
+             audio_path, kind),
         )
 
     def update_recording(self, rec_id: str, **fields: Any) -> None:
@@ -117,17 +145,39 @@ class Store:
     def get_recording(self, rec_id: str) -> Optional[dict]:
         return self._one("SELECT * FROM recording WHERE id=?", (rec_id,))
 
-    def list_recordings(self) -> list[dict]:
+    def list_recordings(self, kind: Optional[str] = None) -> list[dict]:
+        where, args = ("WHERE r.kind=?", (kind,)) if kind else ("", ())
         return self._all(
-            """
+            f"""
             SELECT r.*,
               (SELECT COUNT(DISTINCT s.speaker_idx) FROM sentence s WHERE s.recording_id=r.id)
                 AS speaker_count,
               (SELECT COUNT(*) FROM sentence s WHERE s.recording_id=r.id) AS sentence_count,
               (SELECT s.text FROM sentence s WHERE s.recording_id=r.id
                  ORDER BY s.start_ms, s.idx LIMIT 1) AS first_sentence
-            FROM recording r ORDER BY r.started_at DESC
-            """
+            FROM recording r {where} ORDER BY r.started_at DESC
+            """,
+            args,
+        )
+
+    def list_notes(self, start_ms: Optional[int] = None,
+                   end_ms: Optional[int] = None) -> list[dict]:
+        """Note segments (optionally with started_at in [start_ms, end_ms)), oldest first.
+
+        ``text`` is the segment's sentences joined in order (None when it has none).
+        """
+        where, args = "", ()
+        if start_ms is not None and end_ms is not None:
+            where, args = "AND r.started_at>=? AND r.started_at<?", (start_ms, end_ms)
+        return self._all(
+            f"""
+            SELECT r.*,
+              (SELECT GROUP_CONCAT(t.text, '') FROM
+                 (SELECT s.text FROM sentence s WHERE s.recording_id=r.id
+                  ORDER BY s.start_ms, s.idx) t) AS text
+            FROM recording r WHERE r.kind='note' {where} ORDER BY r.started_at, r.id
+            """,
+            args,
         )
 
     def recordings_with_status(self, status: str) -> list[dict]:
@@ -248,3 +298,58 @@ class Store:
                     "UPDATE sentence SET text=?, edited=1 WHERE recording_id=? AND id=?",
                     (text, rec_id, sid),
                 )
+
+    # ---- hotwords ------------------------------------------------------
+    def list_hotwords(self) -> list[dict]:
+        return self._all("SELECT id, word, position FROM hotword ORDER BY position, id")
+
+    def get_hotword(self, hid: int) -> Optional[dict]:
+        return self._one("SELECT id, word, position FROM hotword WHERE id=?", (hid,))
+
+    def add_hotwords(self, words: list[str]) -> tuple[int, int]:
+        """Append words at the end in the given order; already-present words are skipped.
+
+        Returns (added, skipped).
+        """
+        added = skipped = 0
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                pos = self._db.execute(
+                    "SELECT COALESCE(MAX(position), -1) + 1 FROM hotword").fetchone()[0]
+                for w in words:
+                    cur = self._db.execute(
+                        "INSERT OR IGNORE INTO hotword(word, position, created_at) VALUES (?,?,?)",
+                        (w, pos, now_ms()),
+                    )
+                    if cur.rowcount:
+                        added += 1
+                        pos += 1
+                    else:
+                        skipped += 1
+                self._db.execute("COMMIT")
+            except Exception:
+                self._db.execute("ROLLBACK")
+                raise
+        return added, skipped
+
+    def hotword_taken(self, word: str, exclude_id: int) -> bool:
+        return bool(self._one(
+            "SELECT 1 AS x FROM hotword WHERE word=? AND id<>?", (word, exclude_id)))
+
+    def update_hotword(self, hid: int, word: str) -> None:
+        self._exec("UPDATE hotword SET word=? WHERE id=?", (word, hid))
+
+    def delete_hotword(self, hid: int) -> bool:
+        return self._exec("DELETE FROM hotword WHERE id=?", (hid,)).rowcount > 0
+
+    def reorder_hotwords(self, ids: list[int]) -> None:
+        with self._lock:
+            self._db.execute("BEGIN")
+            try:
+                for pos, hid in enumerate(ids):
+                    self._db.execute("UPDATE hotword SET position=? WHERE id=?", (pos, hid))
+                self._db.execute("COMMIT")
+            except Exception:
+                self._db.execute("ROLLBACK")
+                raise

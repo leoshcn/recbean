@@ -92,9 +92,17 @@ static void test_events(void)
 static void test_builders(void)
 {
     char buf[160];
-    assert(rb_proto_build_start(buf, sizeof(buf), "0.1.0") > 0);
+    assert(rb_proto_build_start(buf, sizeof(buf), "0.1.0", RB_PROTO_MODE_MEETING) > 0);
     assert(strcmp(buf, "{\"type\":\"start\",\"sample_rate\":16000,\"ch\":1,"
-                       "\"codec\":\"ima_adpcm\",\"fw\":\"0.1.0\"}") == 0);
+                       "\"codec\":\"ima_adpcm\",\"fw\":\"0.1.0\",\"mode\":\"meeting\"}") == 0);
+    assert(rb_proto_build_start(buf, sizeof(buf), "0.1.0", RB_PROTO_MODE_NOTE) > 0);
+    assert(strcmp(buf, "{\"type\":\"start\",\"sample_rate\":16000,\"ch\":1,"
+                       "\"codec\":\"ima_adpcm\",\"fw\":\"0.1.0\",\"mode\":\"note\"}") == 0);
+    // 会话任务的 msg 缓冲是 160 B：带 mode 的 start 必须放得下。
+    assert(strlen(buf) < 160);
+    assert(rb_proto_build_start(buf, sizeof(buf), "0.1.0", "x\"y") < 0);   // 只接受两种模式
+    assert(rb_proto_build_start(buf, sizeof(buf), "0.1.0", NULL) < 0);
+    assert(rb_proto_build_start(buf, 40, "0.1.0", RB_PROTO_MODE_NOTE) < 0);   // 缓冲不足
     assert(rb_proto_build_stop(buf, sizeof(buf)) == 15 && strcmp(buf, "{\"type\":\"stop\"}") == 0);
     assert(rb_proto_build_resume(buf, sizeof(buf), "r\"1", 4294967295u) > 0);
     assert(strcmp(buf, "{\"type\":\"resume\",\"recording_id\":\"r\\\"1\",\"next_seq\":4294967295}") == 0);

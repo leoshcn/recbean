@@ -41,11 +41,16 @@ class AsrEngine(Protocol):
     async def run(self, audio: AsyncIterator[bytes], emit: Emit) -> None: ...
 
 
-AsrFactory = Callable[[], AsrEngine]
+# ``factory(kind, hotwords)`` -> engine for one recording. ``kind`` is "meeting" or "note"
+# (note: no speaker diarization); ``hotwords`` are the active hotwords, possibly empty.
+AsrFactory = Callable[[str, list], AsrEngine]
 
 
 class UnconfiguredAsrEngine:
     """Used when no Doubao credentials are set: fails immediately (-> asr_error)."""
+
+    def __init__(self, kind: str = "meeting", hotwords: Optional[list] = None) -> None:
+        pass
 
     async def run(self, audio: AsyncIterator[bytes], emit: Emit) -> None:
         raise AsrError("未配置豆包 ASR 凭据（DOUBAO_APP_KEY/DOUBAO_ACCESS_KEY 或 DOUBAO_API_KEY）")

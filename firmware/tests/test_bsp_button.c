@@ -9,7 +9,8 @@ static struct button_dev_t buttons[BSP_BTN_COUNT];
 static int adc_token, cal_token, adc_live, cal_live, live_buttons;
 static int create_calls, callback_calls, fail_create, fail_callback;
 static int fail_adc, fail_channel, fail_cal, fail_read, fail_convert, fail_delete;
-static int raw_mv, reads, events;
+static int raw_mv, reads, events, releases;
+static unsigned registered_events;   // 已注册的 button_event_t 位集合
 static int64_t clock_us;
 
 esp_err_t adc_oneshot_new_unit(const adc_oneshot_unit_init_cfg_t *cfg, adc_oneshot_unit_handle_t *h) {
@@ -67,13 +68,20 @@ esp_err_t iot_button_delete(button_handle_t h) {
     h->live = false; --live_buttons; return ESP_OK;
 }
 esp_err_t iot_button_register_cb(button_handle_t h, button_event_t ev, button_event_args_t *args, button_cb_t cb, void *u) {
-    (void)args; (void)ev;
+    (void)args;
     assert(h->live);
+    registered_events |= 1u << ev;
     cb(h, u); // No user callbacks may escape a partial initialization.
     return ++callback_calls == fail_callback ? ESP_ERR_NO_MEM : ESP_OK;
 }
 static void event_cb(bsp_btn_t btn, bsp_btn_ev_t ev, void *u) {
-    assert(btn == BSP_BTN_OK && ev == BSP_BTN_CLICK && u == &events);
+    assert(u == &events);
+    if (ev == BSP_BTN_RELEASE) {
+        assert(btn == BSP_BTN_UP);
+        ++releases;
+        return;
+    }
+    assert(btn == BSP_BTN_OK && ev == BSP_BTN_CLICK);
     ++events;
 }
 static void reset_faults(void) {
@@ -105,7 +113,8 @@ int main(void) {
         reset_faults(); fail_create = i;
         assert(bsp_button_init(event_cb, &events) != ESP_OK); retry_success();
     }
-    for (int i = 1; i <= BSP_BTN_COUNT * 4; ++i) {
+    // 每个按键注册 5 个回调：按下 / 单击 / 双击 / 长按 / 松开。
+    for (int i = 1; i <= BSP_BTN_COUNT * 5; ++i) {
         reset_faults(); fail_callback = i;
         assert(bsp_button_init(event_cb, &events) != ESP_OK); retry_success();
     }
@@ -118,6 +127,10 @@ int main(void) {
     assert(events == 0);
     assert(bsp_button_init(event_cb, &events) == ESP_OK);
     cb_click(NULL, (void *)(intptr_t)BSP_BTN_OK); assert(events == 1);
+    // 松开事件（按住说话依赖它）：注册了 BUTTON_PRESS_UP，并以 BSP_BTN_RELEASE 上报。
+    assert(registered_events & (1u << BUTTON_PRESS_UP));
+    assert(registered_events & (1u << BUTTON_PRESS_DOWN));
+    cb_up(NULL, (void *)(intptr_t)BSP_BTN_UP); assert(releases == 1 && events == 1);
     check_voltage(0, BSP_BTN_UP); check_voltage(149, BSP_BTN_UP);
     check_voltage(150, BSP_BTN_DOWN); check_voltage(446, BSP_BTN_DOWN);
     check_voltage(447, BSP_BTN_OK); check_voltage(1899, BSP_BTN_OK);
