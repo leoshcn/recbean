@@ -1,0 +1,200 @@
+{
+  "_comment": "Modeled on research/doubao-streaming-asr-raw.md. 'doc_example' is the documented full server response; 'stream' is a synthetic bigmodel_async sequence. 'real_definite_response' is a real capture (2026-10-18, seedasr 2.0, enable_speaker_info, logid 20261018174835367A80992BF865492B77): speaker label is utterances[].additions.speaker_id, string starting at '0'.",
+  "doc_example": {
+    "audio_info": {
+      "duration": 3696
+    },
+    "result": {
+      "text": "这是字节跳动， 今日头条母公司。",
+      "utterances": [
+        {
+          "definite": true,
+          "end_time": 1705,
+          "start_time": 0,
+          "text": "这是字节跳动，",
+          "words": [
+            {
+              "blank_duration": 0,
+              "end_time": 860,
+              "start_time": 740,
+              "text": "这"
+            },
+            {
+              "blank_duration": 0,
+              "end_time": 1020,
+              "start_time": 860,
+              "text": "是"
+            }
+          ]
+        },
+        {
+          "definite": true,
+          "end_time": 3696,
+          "start_time": 2110,
+          "text": "今日头条母公司。",
+          "words": [
+            {
+              "blank_duration": 0,
+              "end_time": 3070,
+              "start_time": 2910,
+              "text": "今"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "stream": [
+    {
+      "audio_info": {
+        "duration": 600
+      },
+      "result": {
+        "text": "你好",
+        "utterances": [
+          {
+            "definite": false,
+            "start_time": 0,
+            "end_time": 600,
+            "text": "你好"
+          }
+        ]
+      }
+    },
+    {
+      "audio_info": {
+        "duration": 1200
+      },
+      "result": {
+        "text": "你好请问",
+        "utterances": [
+          {
+            "definite": false,
+            "start_time": 0,
+            "end_time": 1200,
+            "text": "你好请问"
+          }
+        ]
+      }
+    },
+    {
+      "audio_info": {
+        "duration": 2400
+      },
+      "result": {
+        "text": "你好，请问是王先生吗？好",
+        "utterances": [
+          {
+            "definite": true,
+            "start_time": 0,
+            "end_time": 1800,
+            "text": "你好，请问是王先生吗？",
+            "additions": {
+              "speaker": "1"
+            }
+          },
+          {
+            "definite": false,
+            "start_time": 2000,
+            "end_time": 2400,
+            "text": "好"
+          }
+        ]
+      }
+    },
+    {
+      "audio_info": {
+        "duration": 3600
+      },
+      "result": {
+        "text": "你好，请问是王先生吗？是的，我是。",
+        "utterances": [
+          {
+            "definite": true,
+            "start_time": 0,
+            "end_time": 1800,
+            "text": "你好，请问是王先生吗？",
+            "additions": {
+              "speaker": "1"
+            }
+          },
+          {
+            "definite": true,
+            "start_time": 2000,
+            "end_time": 3500,
+            "text": "是的，我是。",
+            "additions": {
+              "speaker": "2"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "stream_expected": [
+    [
+      {
+        "type": "partial",
+        "text": "你好"
+      }
+    ],
+    [
+      {
+        "type": "partial",
+        "text": "你好请问"
+      }
+    ],
+    [
+      {
+        "type": "final",
+        "text": "你好，请问是王先生吗？",
+        "start_ms": 0,
+        "end_ms": 1800,
+        "speaker": "1"
+      },
+      {
+        "type": "partial",
+        "text": "好"
+      }
+    ],
+    [
+      {
+        "type": "final",
+        "text": "是的，我是。",
+        "start_ms": 2000,
+        "end_ms": 3500,
+        "speaker": "2"
+      },
+      {
+        "type": "partial",
+        "text": ""
+      }
+    ]
+  ],
+  "real_definite_response": {
+    "audio_info": {
+      "duration": 6400
+    },
+    "result": {
+      "additions": {
+        "log_id": "20261018174835367A80992BF865492B77"
+      },
+      "text": "大家好，今天我们开会讨论一下录音豆的第一版计划。",
+      "utterances": [
+        {
+          "additions": {
+            "all_matched_hotwords": "",
+            "fixed_prefix_result": "",
+            "invoke_type": "hard_vad",
+            "source": "two_pass",
+            "speaker_id": "0",
+            "use_bigasr_post_process": "true"
+          },
+          "definite": true,
+          "end_time": 5912,
+          "text": "大家好，今天我们开会讨论一下录音豆的第一版计划。"
+        }
+      ]
+    }
+  }
+}

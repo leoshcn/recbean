@@ -1,0 +1,12 @@
+# secrets / runtime data
+.env
+data/
+
+# server
+server/.venv/
+server/.localdata/
+server/web/node_modules/
+server/web/dist/
+__pycache__/
+*.pyc
+.pytest_cache/
