@@ -13,12 +13,14 @@ Conventions for the FastAPI server in `server/` (Python 3, SQLite, WebSockets, D
 | [Quality Guidelines](./quality-guidelines.md) | pytest setup & rules, code style, forbidden patterns, review checklist |
 | [Doubao ASR & Deployment](./doubao-asr-and-deploy.md) | Verified Doubao ASR contract, speaker field, file-ASR access, test-machine deploy |
 | [Browser Recording & Ingress Gateways](./browser-recording.md) | Gateway hook pattern for new audio sources, resume rule, browser capture / HTTPS-proxy constraints |
+| [Derived Audio](./derived-audio.md) | WAV as source of truth, m4a cache via ffmpeg (`transcode.py`), freshness, failure mapping |
 
 ## Pre-Development Checklist
 
 - New endpoint / schema / setting → directory-structure + database + error-handling guides.
 - New audio source or protocol change → browser-recording.md and `server/README.md`.
 - ASR changes → doubao-asr-and-deploy.md; never call the real API from tests.
+- Audio format / export / ffmpeg changes → derived-audio.md.
 
 ## Quality Check
 
