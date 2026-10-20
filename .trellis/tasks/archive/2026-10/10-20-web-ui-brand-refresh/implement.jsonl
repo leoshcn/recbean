@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-20-web-ui-brand-refresh/prd.md", "reason": "Requirements R1-R7 and acceptance criteria"}
+{"file": ".trellis/tasks/10-20-web-ui-brand-refresh/design.md", "reason": "Token table, theme switching, BrandMark, layout and record console design"}
+{"file": "branding/recbean-brand-identity.html", "reason": "Source VI: palette, typography, logo symbols rb-mark/rb-icon, usage rules, animated slit states"}
+{"file": ".trellis/spec/backend/browser-recording.md", "reason": "Record page/browser recording rules; console redesign must not alter recording behavior"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse shared tokens/classes instead of per-view duplicates"}

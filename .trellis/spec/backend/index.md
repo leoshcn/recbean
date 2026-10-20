@@ -1,40 +1,29 @@
 # Backend Development Guidelines
 
-> Best practices for backend development in this project.
-
----
-
-## Overview
-
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
-
----
+Conventions for the FastAPI server in `server/` (Python 3, SQLite, WebSockets, Doubao ASR).
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
-| [Doubao ASR & Deployment](./doubao-asr-and-deploy.md) | Verified Doubao ASR contract, speaker field, file-ASR access, test-machine deploy | Done |
-| [Browser Recording & Ingress Gateways](./browser-recording.md) | Gateway hook pattern for new audio sources, resume rule, browser capture / HTTPS-proxy constraints | Done |
+| Guide | Description |
+|-------|-------------|
+| [Directory Structure](./directory-structure.md) | Module responsibilities, app factory, where new code goes |
+| [Database Guidelines](./database-guidelines.md) | `Store` (sqlite3, lock, WAL), schema & migrations, transactions, query rules |
+| [Error Handling](./error-handling.md) | HTTP status matrix, WS error events, AsrError path, startup recovery |
+| [Logging Guidelines](./logging-guidelines.md) | Logger names, format, levels, what never to log |
+| [Quality Guidelines](./quality-guidelines.md) | pytest setup & rules, code style, forbidden patterns, review checklist |
+| [Doubao ASR & Deployment](./doubao-asr-and-deploy.md) | Verified Doubao ASR contract, speaker field, file-ASR access, test-machine deploy |
+| [Browser Recording & Ingress Gateways](./browser-recording.md) | Gateway hook pattern for new audio sources, resume rule, browser capture / HTTPS-proxy constraints |
+| [Derived Audio](./derived-audio.md) | WAV as source of truth, m4a cache via ffmpeg (`transcode.py`), freshness, failure mapping |
 
----
+## Pre-Development Checklist
 
-## How to Fill These Guidelines
+- New endpoint / schema / setting → directory-structure + database + error-handling guides.
+- New audio source or protocol change → browser-recording.md and `server/README.md`.
+- ASR changes → doubao-asr-and-deploy.md; never call the real API from tests.
+- Audio format / export / ffmpeg changes → derived-audio.md.
 
-For each guideline file:
+## Quality Check
 
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
+- `.venv/Scripts/python -m pytest` green; review checklist in quality-guidelines.md.
 
 **Language**: All documentation should be written in **English**.

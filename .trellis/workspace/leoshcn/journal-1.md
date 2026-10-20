@@ -92,3 +92,45 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Web 端按品牌 VI 重设计 + 深色模式
+
+**Date**: 2026-10-20
+**Task**: Web 端按品牌 VI 重设计 + 深色模式
+**Branch**: `feature/web-browser-recording`
+
+### Summary
+
+按 branding VI 重做 server/web：设计 token 浅/深两套、三态主题切换、BrandMark 组件与 favicon、侧边栏+移动抽屉布局、录音控制台（仅桌面）；check 修复 6 个样式/可访问性问题；部署 192.168.2.144 验收通过；新增 spec frontend/theming-and-brand.md
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0cb92d9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 6: 会议录音支持下载为 m4a
+
+**Date**: 2026-10-20
+**Task**: 会议录音支持下载为 m4a
+**Branch**: `feature/web-browser-recording`
+
+### Summary
+
+录音结束后后台用 ffmpeg 把 WAV 转为 AAC 32kbps m4a（约 1/8 体积），新增 audio.m4a 下载接口与详情页按钮，WAV 保留用于播放；已部署测试机并人工验收；新增 spec backend/derived-audio.md
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9b8b5b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

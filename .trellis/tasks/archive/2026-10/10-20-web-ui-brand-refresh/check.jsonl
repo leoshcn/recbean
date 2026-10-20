@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-20-web-ui-brand-refresh/prd.md", "reason": "Verify AC1-AC8"}
+{"file": ".trellis/tasks/10-20-web-ui-brand-refresh/design.md", "reason": "Verify implementation matches tokens, theme and console design"}
+{"file": "branding/recbean-brand-identity.html", "reason": "Verify VI rules (accent per background, no logo effects, signal red only for REC)"}
+{"file": ".trellis/spec/backend/browser-recording.md", "reason": "Confirm Record.vue logic unchanged"}

@@ -34,6 +34,7 @@ import json
 import logging
 import secrets
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
@@ -46,6 +47,7 @@ from .config import Settings
 from .hotwords import active_words
 from .pairing import hash_token
 from .store import Store
+from .transcode import ensure_m4a, m4a_path
 from .wav import WavWriter
 
 log = logging.getLogger("recbean.device")
@@ -286,6 +288,11 @@ class RecordingSession:
         n = self.store.count_sentences(self.rec_id)
         log.info("recording %s finished: status=%s duration=%dms sentences=%d",
                  self.rec_id, status, duration, n)
+        if self.kind == "meeting" and duration > 0:
+            try:
+                self.gw.schedule_m4a(self.rec_id, self.wav.path)
+            except Exception as e:  # never let the download cache affect finishing
+                log.error("recording %s: cannot schedule m4a: %r", self.rec_id, e)
         return duration, n
 
 
@@ -306,6 +313,8 @@ class Gateway:
         # May be shared between gateways so the REST API sees every live recording.
         self.sessions: dict[str, RecordingSession] = {} if sessions is None else sessions
         self.tz = _zone(settings.timezone)
+        # Background m4a jobs; referenced here so they are not garbage-collected mid-run.
+        self.m4a_tasks: set[asyncio.Task] = set()
 
     # ---- hooks ------------------------------------------------------------
     async def authenticate(self, ws: WebSocket) -> Optional[str]:
@@ -405,6 +414,30 @@ class Gateway:
     async def shutdown(self) -> None:
         for s in list(self.sessions.values()):
             await s.finish(interrupted=True)
+        # Unfinished m4a jobs are dropped; the download endpoint regenerates them on demand.
+        tasks = list(self.m4a_tasks)
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    # ---- m4a download cache -------------------------------------------------
+    def schedule_m4a(self, rec_id: str, wav: Path) -> None:
+        """Pre-generate the meeting's m4a in the background after it finished, so the
+        download is instant. Failures are only logged: the download retries on demand."""
+        task = asyncio.create_task(self._make_m4a(rec_id, wav))
+        self.m4a_tasks.add(task)
+        task.add_done_callback(self.m4a_tasks.discard)
+
+    async def _make_m4a(self, rec_id: str, wav: Path) -> None:
+        try:
+            await ensure_m4a(wav)
+            if not self.store.get_recording(rec_id):
+                # Deleted while transcoding: don't leave an orphan behind.
+                m4a_path(wav).unlink(missing_ok=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.error("recording %s: m4a transcode failed: %r", rec_id, e)
 
     async def handle(self, ws: WebSocket) -> None:
         device_id = await self.authenticate(ws)

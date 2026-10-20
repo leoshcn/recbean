@@ -1,39 +1,27 @@
 # Frontend Development Guidelines
 
-> Best practices for frontend development in this project.
-
----
-
-## Overview
-
-This directory contains guidelines for frontend development. Fill in each file with your project's specific conventions.
-
----
+Conventions for the Web UI in `server/web/` (Vue 3 `<script setup>`, plain JavaScript,
+vue-router, Vite; no UI/state/CSS libraries).
 
 ## Guidelines Index
 
-| Guide | Description | Status |
-|-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
-| [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |
-| [State Management](./state-management.md) | Local state, global state, server state | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| Guide | Description |
+|-------|-------------|
+| [Directory Structure](./directory-structure.md) | File layout, routes, where new code goes |
+| [Component Guidelines](./component-guidelines.md) | View structure, inline editing, destructive actions, template conventions |
+| [State Management](./state-management.md) | Local refs, load pattern, polling for live data, localStorage rules |
+| [Data Fetching & Error Display](./data-fetching.md) | `api.js` contract, error mapping, WebSocket ownership |
+| [Theming, Brand & Layout](./theming-and-brand.md) | Design tokens, light/dark theme, BrandMark, app shell, responsive & VI rules |
+| [Quality Guidelines](./quality-guidelines.md) | Build gate, manual check matrix, JS conventions, accessibility, forbidden patterns |
 
----
+## Pre-Development Checklist
 
-## How to Fill These Guidelines
+- Read the guides for the area you touch; any visual change → `theming-and-brand.md`.
+- Changing an API call → check `server/app/api.py` and `../backend/error-handling.md`.
+- Touching `Record.vue` / `recorder.js` → `../backend/browser-recording.md`.
 
-For each guideline file:
+## Quality Check
 
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
+- `npm run build` passes; color sweep clean; manual matrix done (see quality guidelines).
 
 **Language**: All documentation should be written in **English**.

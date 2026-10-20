@@ -1,59 +1,47 @@
 # Component Guidelines
 
-> How components are built in this project.
+## Shape of a view
 
----
+All components use `<template>` → `<script setup>` → `<style scoped>` in that order
+(e.g. `views/RecordingList.vue`). Plain JS, no TypeScript.
 
-## Overview
+- Route params arrive as props (`defineProps({ id: { type: String, required: true } })` in
+  `RecordingDetail.vue`, enabled by `props: true` in the route).
+- Local state is `ref`/`reactive`/`computed` declared at the top of the script; see
+  [state-management.md](./state-management.md).
+- Navigation via `useRouter().push(...)`; links via `<router-link>`. Encode ids:
+  ``router.push(`/r/${encodeURIComponent(r.id)}`)``.
 
-<!--
-Document your project's component conventions here.
+## Inline editing pattern
 
-Questions to answer:
-- What component patterns do you use?
-- How are props defined?
-- How do you handle composition?
-- What accessibility standards apply?
--->
+Views edit in place with an `editingX` ref + `draft` ref (`NoteDay.vue`, `RecordingDetail.vue`,
+`Hotwords.vue`):
 
-(To be filled by the team)
+- `startEdit(item)` copies the value into `draft` and sets `editingId = item.id`.
+- Enter saves (`@keydown.enter.exact.prevent` on textarea, `@keyup.enter` on input), Esc
+  cancels (`@keyup.esc="editingId = null"`); show the hint `Enter 保存，Esc 取消`.
+- Trim and ignore empty drafts before calling the API; update the local item from the
+  response.
 
----
+## Destructive actions
 
-## Component Structure
+`if (!confirm('确定删除…无法恢复。')) return` before the API call; describe what is lost.
+Buttons that would conflict with a live recording are `:disabled="rec.live"` (server
+would answer 409).
 
-<!-- Standard structure of a component file -->
+## Templates & styling
 
-(To be filled by the team)
+- Use shared classes from `style.css` (`.card`, `.row`, `.spacer`, `.page-head`, `.badge.<status>`,
+  `button.primary/.danger/.link`, `.mono`, `.empty`, `.alert.*`) before writing scoped CSS.
+  Token and VI rules: [theming-and-brand.md](./theming-and-brand.md).
+- Status text comes from `STATUS_TEXT` in `util.js` with `class="badge" :class="status"`.
+- Times/durations always via `fmtDuration` / `fmtTime` / `fmtDay`, rendered in `.mono`.
+- Clickable cards: `@click="open(x)"` plus `tabindex="0"` and `@keydown.enter.self="open(x)"`;
+  inner buttons use `@click.stop`.
+- UI copy is Simplified Chinese; code comments English (Chinese allowed where they quote UI).
 
----
+## Components
 
-## Props Conventions
-
-<!-- How props should be defined and typed -->
-
-(To be filled by the team)
-
----
-
-## Styling Patterns
-
-<!-- How styles are applied (CSS modules, styled-components, Tailwind, etc.) -->
-
-(To be filled by the team)
-
----
-
-## Accessibility
-
-<!-- A11y requirements and patterns -->
-
-(To be filled by the team)
-
----
-
-## Common Mistakes
-
-<!-- Component-related mistakes your team has made -->
-
-(To be filled by the team)
+`components/BrandMark.vue` is the only shared component (logo with `idle/rec/flat` states).
+Extract a component only when markup is reused across views; don't create wrappers around
+single native elements.
