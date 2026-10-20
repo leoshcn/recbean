@@ -13,6 +13,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/data \
     WEB_DIST=/app/web/dist
 WORKDIR /app
+# ffmpeg: meeting audio download as m4a (app/transcode.py)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/

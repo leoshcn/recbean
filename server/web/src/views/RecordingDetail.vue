@@ -18,6 +18,10 @@
           </template>
           <span class="spacer" />
           <a class="btn" :href="api.exportUrl(rec.id)">导出 TXT</a>
+          <template v-if="rec.kind !== 'note'">
+            <button v-if="rec.live" disabled title="录音结束后可下载">下载音频 (M4A)</button>
+            <a v-else class="btn" :href="api.audioM4aUrl(rec.id)">下载音频 (M4A)</a>
+          </template>
           <button class="danger" :disabled="rec.live" @click="remove">删除</button>
         </div>
         <div class="row meta">

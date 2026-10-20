@@ -10,12 +10,15 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (FileResponse, JSONResponse, PlainTextResponse, Response,
+                               StreamingResponse)
 
 from .hotwords import estimate_tokens, normalize_word, select_active, validate_word
 from .models import (HotwordOrder, HotwordPatch, HotwordsAdd, PairConfirm, PairRequest,
                      RecordingPatch, SentencePatch, SpeakerMerge, SpeakerPatch)
 from .store import KINDS
+from .transcode import TranscodeError, ensure_m4a, m4a_path
+from .wav import HEADER_BYTES
 
 log = logging.getLogger("recbean.api")
 
@@ -82,10 +85,11 @@ def delete_recording(rec_id: str, request: Request):
     _store(request).delete_recording(rec_id)
     path = rec.get("audio_path")
     if path:
-        try:
-            Path(path).unlink(missing_ok=True)
-        except OSError as e:
-            log.error("failed to delete %s: %s", path, e)
+        for p in (Path(path), m4a_path(Path(path))):
+            try:
+                p.unlink(missing_ok=True)
+            except OSError as e:
+                log.error("failed to delete %s: %s", p, e)
     return {"ok": True}
 
 
@@ -199,10 +203,41 @@ def export_txt(rec_id: str, request: Request):
     store = _store(request)
     text = export_text(rec, store.list_speakers(rec_id), store.list_sentences(rec_id),
                        request.app.state.gateway.tz)
-    fname = re.sub(r'[\\/:*?"<>|]+', "_", rec["title"]) + ".txt"
-    disp = f"attachment; filename=\"{rec_id}.txt\"; filename*=UTF-8''{quote(fname)}"
     return PlainTextResponse(text, media_type="text/plain; charset=utf-8",
-                             headers={"Content-Disposition": disp})
+                             headers={"Content-Disposition": _attachment(rec, ".txt")})
+
+
+def _attachment(rec: dict, ext: str) -> str:
+    """Download named after the title (unsafe chars -> ``_``), ASCII fallback = id."""
+    fname = re.sub(r'[\\/:*?"<>|]+', "_", rec["title"]) + ext
+    return f"attachment; filename=\"{rec['id']}{ext}\"; filename*=UTF-8''{quote(fname)}"
+
+
+@api.get("/recordings/{rec_id}/audio.m4a")
+async def get_audio_m4a(rec_id: str, request: Request):
+    """Compressed meeting audio for upload elsewhere; cached next to the WAV and
+    regenerated when missing or stale (``transcode.ensure_m4a``)."""
+    rec = _recording_or_404(request, rec_id)
+    if rec["kind"] != "meeting":
+        raise HTTPException(404, "audio not found")
+    if rec_id in request.app.state.gateway.sessions:
+        raise HTTPException(409, "recording in progress")
+    wav = Path(rec.get("audio_path") or "")
+    if not wav.is_file() or wav.stat().st_size <= HEADER_BYTES:
+        raise HTTPException(404, "audio not found")
+    try:
+        m4a = await ensure_m4a(wav)
+    except TranscodeError as e:
+        log.error("recording %s: m4a transcode failed: %r", rec_id, e)
+        raise HTTPException(500, "transcode failed") from None
+    if not _store(request).get_recording(rec_id):  # deleted while transcoding: no orphan
+        try:
+            m4a.unlink(missing_ok=True)
+        except OSError as e:
+            log.error("failed to delete %s: %s", m4a, e)
+        raise HTTPException(404, "recording not found")
+    return FileResponse(m4a, media_type="audio/mp4",
+                        headers={"Content-Disposition": _attachment(rec, ".m4a")})
 
 
 # ---- notes (kind='note', grouped per local day) ---------------------------------

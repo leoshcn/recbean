@@ -113,3 +113,24 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: 会议录音支持下载为 m4a
+
+**Date**: 2026-10-20
+**Task**: 会议录音支持下载为 m4a
+**Branch**: `feature/web-browser-recording`
+
+### Summary
+
+录音结束后后台用 ffmpeg 把 WAV 转为 AAC 32kbps m4a（约 1/8 体积），新增 audio.m4a 下载接口与详情页按钮，WAV 保留用于播放；已部署测试机并人工验收；新增 spec backend/derived-audio.md
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a9b8b5b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

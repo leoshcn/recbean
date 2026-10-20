@@ -121,6 +121,11 @@ keeps the last 60 s of frames and replays them from `next_seq` after a reconnect
   recording or speaker (neither a speaker row nor any sentence), 409 while live,
   422 for idx outside 1..99.
 - `GET /api/recordings/{id}/audio` (WAV, Range supported), `GET /api/recordings/{id}/export.txt`.
+- `GET /api/recordings/{id}/audio.m4a` (meetings only): AAC mono 16 kHz 32 kbps attachment
+  named after the title. Generated in the background when a meeting finishes and cached as
+  `audio_dir/{id}.m4a`; regenerated on demand if missing or older than the WAV (needs
+  `ffmpeg` on PATH, installed in the Docker image). 409 while live, 404 for notes or empty
+  audio, 500 if ffmpeg is missing/fails. `DELETE /api/recordings/{id}` removes both files.
 - `GET|POST /api/pairings`, `GET /api/devices`, `DELETE /api/devices/{id}`, `GET /api/health`.
 
 ## Doubao ASR

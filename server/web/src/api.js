@@ -42,6 +42,7 @@ export const api = {
     request('POST', `/api/recordings/${enc(id)}/speakers/merge`, { from, into }),
   audioUrl: (id) => `/api/recordings/${enc(id)}/audio`,
   exportUrl: (id) => `/api/recordings/${enc(id)}/export.txt`,
+  audioM4aUrl: (id) => `/api/recordings/${enc(id)}/audio.m4a`,
   listPairings: () => request('GET', '/api/pairings'),
   confirmPairing: (code, name) => request('POST', '/api/pairings', { code, name: name || null }),
   listDevices: () => request('GET', '/api/devices'),

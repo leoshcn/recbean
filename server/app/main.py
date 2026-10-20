@@ -42,6 +42,7 @@ def create_app(settings: Optional[Settings] = None,
     # Browser recordings share the session table, so the REST API sees them as live and
     # gateway.shutdown() finishes them too.
     browser_gateway = BrowserGateway(settings, store, factory, sessions=gateway.sessions)
+    browser_gateway.m4a_tasks = gateway.m4a_tasks  # likewise cancelled by gateway.shutdown()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
