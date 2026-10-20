@@ -92,3 +92,24 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Web 端按品牌 VI 重设计 + 深色模式
+
+**Date**: 2026-10-20
+**Task**: Web 端按品牌 VI 重设计 + 深色模式
+**Branch**: `feature/web-browser-recording`
+
+### Summary
+
+按 branding VI 重做 server/web：设计 token 浅/深两套、三态主题切换、BrandMark 组件与 favicon、侧边栏+移动抽屉布局、录音控制台（仅桌面）；check 修复 6 个样式/可访问性问题；部署 192.168.2.144 验收通过；新增 spec frontend/theming-and-brand.md
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0cb92d9` | (see git log) |
+
+### Status
+
+[OK] **Completed**
