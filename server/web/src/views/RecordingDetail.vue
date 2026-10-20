@@ -23,6 +23,7 @@
           <span>{{ fmtTime(rec.started_at) }}</span>
           <span>时长 {{ fmtDuration(rec.duration_ms) }}</span>
           <span class="badge" :class="rec.status">{{ STATUS_TEXT[rec.status] || rec.status }}</span>
+          <span v-if="rec.device_id === BROWSER_DEVICE" class="badge source">浏览器</span>
         </div>
         <p v-if="rec.error" class="error">识别异常：{{ rec.error }}</p>
         <audio ref="audio" controls preload="metadata" :src="audioSrc" class="player"
@@ -94,7 +95,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { STATUS_TEXT, fmtDuration, fmtTime, speakerColor } from '../util'
+import { BROWSER_DEVICE, STATUS_TEXT, fmtDuration, fmtTime, speakerColor } from '../util'
 
 const props = defineProps({ id: { type: String, required: true } })
 const router = useRouter()

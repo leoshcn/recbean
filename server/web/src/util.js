@@ -27,6 +27,9 @@ export function fmtDay(date) {
   return Number.isNaN(wd) ? date : `${date} ${WEEKDAYS[wd]}`
 }
 
+// recording.device_id of recordings made on the /record page (server web_ws.py)
+export const BROWSER_DEVICE = 'browser'
+
 export const STATUS_TEXT = {
   recording: '录音中',
   done: '已完成',

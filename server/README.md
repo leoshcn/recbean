@@ -1,8 +1,8 @@
 # recbean server
 
 FastAPI + SQLite. One port (8080 in the container, published as host 8090 by
-`docker-compose.yml`) serves the device WebSocket, the REST API and the
-built Vue 3 Web UI. Design: `.trellis/tasks/archive/2026-10/10-18-recbean-mvp/design.md` §3–§6.
+`docker-compose.yml`) serves the device WebSocket, the browser recording WebSocket, the
+REST API and the built Vue 3 Web UI. Design: `.trellis/tasks/archive/2026-10/10-18-recbean-mvp/design.md` §3–§6.
 
 ## Develop / test
 
@@ -61,6 +61,37 @@ python3 server/tools/fake_device.py --host 192.168.2.144:8090 --auto-confirm --w
   (`enable_speaker_info=false`, no `ssd_version`) and every `final` has `speaker` 1. All
   other messages are identical for both modes. Deploy the server before firmware that
   sends `mode` (an old server just stores notes as meetings).
+
+## Browser recording WebSocket (summary)
+
+`/web/ws` (`app/web_ws.py`, task `10-20-web-browser-recording`), used by the Web page
+`/#/record`. Browsers only allow microphone / screen capture on HTTPS, so in practice it
+is reached as `wss://` through the Synology reverse proxy (root `README.md`); the proxy
+rule needs the WebSocket custom header. Same messages as `/device/ws` except:
+
+- No token: the Web UI has no login (LAN only). Ownership is proven on resume by a
+  random `resume_token` returned in the first `started`.
+- `start`: `{"type":"start","codec":"pcm_s16le","sample_rate":16000,"ch":1,
+  "client":"web/x.y.z"}`; another codec / rate / channel count → `bad_request`. `mode`
+  is ignored: browser recordings are always `kind=meeting` (title `会议 MM-DD HH:MM`) and
+  stored with `device_id="browser"` (the Web list shows a 「浏览器」 tag).
+- `started`: `{"type":"started","recording_id":..,"resume_token":..}`.
+- Audio frame (binary, little-endian): `seq u32 | 6400 B s16le PCM` (3200 samples,
+  200 ms, 16 kHz mono). Frames of another length are logged and dropped. Dedupe and
+  gap-silence rules are the same as for devices.
+- `resume`: `{"type":"resume","recording_id":..,"resume_token":..,"next_seq":N}` →
+  `started` with `"resumed":true,"next_seq":N`; already finalized → its `saved`; wrong
+  token or unknown id → `resume_failed` (tokens live in memory, so a resume after a
+  server restart fails; the recording itself was saved as `interrupted`).
+- Several browser recordings may run at once (a browser `start` never abandons another
+  recording); one connection holds at most one (`busy`). Browser and device sessions share
+  the gateway session table, so `live`, delete-409 and shutdown handling are identical.
+
+The page mixes microphone (`getUserMedia`, echo cancellation on) and system audio
+(`getDisplayMedia` with `systemAudio:'include'`, video track stopped immediately) in Web
+Audio; `web/public/pcm-worklet.js` low-passes, resamples to 16 kHz and cuts frames. It
+keeps the last 60 s of frames and replays them from `next_seq` after a reconnect
+(backoff 1–5 s).
 
 ## Web REST API (summary)
 

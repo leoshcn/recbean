@@ -34,7 +34,7 @@ import json
 import logging
 import secrets
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import WebSocket
@@ -54,6 +54,16 @@ DEVICE_TEXT_MAX = 256  # bytes, design.md §3
 MAX_GAP_FRAMES = 300  # fill at most 60 s of silence for a sequence gap
 DURATION_UPDATE_MS = 5000
 TITLE_PREFIX = {"meeting": "会议", "note": "笔记"}
+
+# ``decode(buf) -> (seq, pcm)``: one binary ws frame -> sequence number + 16 kHz s16le PCM
+# (FRAME_SAMPLES samples). Raises ``FrameError`` for malformed frames.
+FrameDecoder = Callable[[bytes], tuple[int, bytes]]
+
+
+def decode_adpcm_frame(buf: bytes) -> tuple[int, bytes]:
+    """Device frames: IMA-ADPCM with seq + codec state header (adpcm.py)."""
+    frame, pcm = decode_frame(buf)
+    return frame.seq, pcm
 
 
 def parse_mode(value) -> str:
@@ -117,8 +127,10 @@ class DeviceConn:
 
 class RecordingSession:
     def __init__(self, gw: "Gateway", rec_id: str, device_id: str, kind: str = "meeting",
-                 hotwords: Optional[list[str]] = None) -> None:
+                 hotwords: Optional[list[str]] = None,
+                 decode: FrameDecoder = decode_adpcm_frame) -> None:
         self.gw = gw
+        self.decode = decode
         self.store = gw.store
         self.rec_id = rec_id
         self.device_id = device_id
@@ -179,21 +191,21 @@ class RecordingSession:
         if self.finished:
             return
         try:
-            frame, pcm = decode_frame(buf)
+            seq, pcm = self.decode(buf)
         except FrameError as e:
             log.warning("recording %s: bad frame (%d B): %s", self.rec_id, len(buf), e)
             return
-        if frame.seq < self.next_seq:
+        if seq < self.next_seq:
             return  # duplicate (resent after reconnect)
-        gap = frame.seq - self.next_seq
+        gap = seq - self.next_seq
         if gap:
             log.warning("recording %s: seq gap %d..%d, filling %d frames of silence",
-                        self.rec_id, self.next_seq, frame.seq - 1, min(gap, MAX_GAP_FRAMES))
+                        self.rec_id, self.next_seq, seq - 1, min(gap, MAX_GAP_FRAMES))
             silence = bytes(FRAME_SAMPLES * 2)
             for _ in range(min(gap, MAX_GAP_FRAMES)):
                 self._feed(silence)
         self._feed(pcm)
-        self.next_seq = frame.seq + 1
+        self.next_seq = seq + 1
         dur = self.wav.duration_ms
         if dur - self._last_duration_update >= DURATION_UPDATE_MS:
             self._last_duration_update = dur
@@ -278,12 +290,64 @@ class RecordingSession:
 
 
 class Gateway:
-    def __init__(self, settings: Settings, store: Store, asr_factory: AsrFactory) -> None:
+    """Device recording gateway. Subclasses (``web_ws.BrowserGateway``) override the
+    hooks below to change auth, accepted audio format and resume ownership; session /
+    ASR / WAV / resume-timeout handling is shared.
+    """
+
+    peer = "device"  # log label
+    decode: FrameDecoder = staticmethod(decode_adpcm_frame)
+
+    def __init__(self, settings: Settings, store: Store, asr_factory: AsrFactory,
+                 sessions: Optional[dict[str, RecordingSession]] = None) -> None:
         self.settings = settings
         self.store = store
         self.asr_factory = asr_factory
-        self.sessions: dict[str, RecordingSession] = {}
+        # May be shared between gateways so the REST API sees every live recording.
+        self.sessions: dict[str, RecordingSession] = {} if sessions is None else sessions
         self.tz = _zone(settings.timezone)
+
+    # ---- hooks ------------------------------------------------------------
+    async def authenticate(self, ws: WebSocket) -> Optional[str]:
+        """Accept the ws; return the connection's device id, or None after rejecting."""
+        token = _bearer(ws)
+        device = self.store.device_by_token_hash(hash_token(token)) if token else None
+        await ws.accept()
+        if not device:
+            log.warning("device ws rejected: bad token from %s", ws.client)
+            try:
+                await ws.send_text(json.dumps(
+                    {"type": "error", "code": "auth", "msg": "device not paired"}))
+                await ws.close(code=1008)
+            except Exception:
+                pass
+            return None
+        return device["id"]
+
+    def check_format(self, msg: dict) -> Optional[str]:
+        """Error message if the start's audio format is unsupported, else None."""
+        if (msg.get("codec", "ima_adpcm"), msg.get("sample_rate", 16000),
+                msg.get("ch", 1)) != ("ima_adpcm", 16000, 1):
+            return "only ima_adpcm 16000 Hz mono is supported"
+        return None
+
+    def start_kind(self, msg: dict) -> str:
+        return parse_mode(msg.get("mode"))
+
+    async def before_start(self, conn: DeviceConn) -> None:
+        # A new start from the same device abandons any earlier unfinished recording.
+        for s in list(self.sessions.values()):
+            if s.device_id == conn.device_id:
+                await s.finish(interrupted=True)
+
+    def started_extra(self, session: RecordingSession) -> dict:
+        """Extra fields for the ``started`` event of a new recording."""
+        return {}
+
+    def owns(self, rec_id: str, owner_device_id: Optional[str], conn: DeviceConn,
+             msg: dict) -> bool:
+        """May ``conn`` resume recording ``rec_id`` (stored with ``owner_device_id``)?"""
+        return owner_device_id == conn.device_id
 
     def _new_id(self, kind: str = "meeting") -> tuple[str, str]:
         now = datetime.now(self.tz)
@@ -296,33 +360,32 @@ class Gateway:
         return active_words(words, self.settings.hotword_token_budget)
 
     async def start(self, conn: DeviceConn, msg: dict) -> Optional[RecordingSession]:
-        if (msg.get("codec", "ima_adpcm"), msg.get("sample_rate", 16000),
-                msg.get("ch", 1)) != ("ima_adpcm", 16000, 1):
-            await conn.send({"type": "error", "code": "bad_request",
-                             "msg": "only ima_adpcm 16000 Hz mono is supported"})
+        err = self.check_format(msg)
+        if err:
+            await conn.send({"type": "error", "code": "bad_request", "msg": err})
             return None
-        # A new start from the same device abandons any earlier unfinished recording.
-        for s in list(self.sessions.values()):
-            if s.device_id == conn.device_id:
-                await s.finish(interrupted=True)
-        kind = parse_mode(msg.get("mode"))
+        await self.before_start(conn)
+        kind = self.start_kind(msg)
         rec_id, title = self._new_id(kind)
         audio_path = self.settings.audio_dir / f"{rec_id}.wav"
         self.store.create_recording(rec_id, title, conn.device_id, str(audio_path), kind=kind)
         hotwords = self.active_hotwords()
-        session = RecordingSession(self, rec_id, conn.device_id, kind=kind, hotwords=hotwords)
+        session = RecordingSession(self, rec_id, conn.device_id, kind=kind, hotwords=hotwords,
+                                   decode=self.decode)
         self.sessions[rec_id] = session
         session.conn = conn
-        log.info("recording %s (%s) started by device %s fw=%s hotwords=%d", rec_id, kind,
-                 conn.device_id, msg.get("fw"), len(hotwords))
-        await conn.send({"type": "started", "recording_id": rec_id})
+        log.info("recording %s (%s) started by %s %s fw=%s hotwords=%d", rec_id, kind,
+                 self.peer, conn.device_id, msg.get("fw") or msg.get("client"), len(hotwords))
+        await conn.send({"type": "started", "recording_id": rec_id,
+                         **self.started_extra(session)})
         session.start_asr()
         return session
 
     async def resume(self, conn: DeviceConn, msg: dict) -> Optional[RecordingSession]:
         rec_id = str(msg.get("recording_id") or "")
         session = self.sessions.get(rec_id)
-        if session and session.device_id == conn.device_id and not session.finished:
+        if (session and not session.finished
+                and self.owns(rec_id, session.device_id, conn, msg)):
             log.info("recording %s resumed (device next_seq=%s, server next_seq=%d)",
                      rec_id, msg.get("next_seq"), session.next_seq)
             await conn.send({"type": "started", "recording_id": rec_id, "resumed": True,
@@ -330,7 +393,7 @@ class Gateway:
             await session.attach(conn)
             return session
         rec = self.store.get_recording(rec_id)
-        if rec and rec["device_id"] == conn.device_id:
+        if rec and self.owns(rec_id, rec["device_id"], conn, msg):
             # Already finalized (e.g. resume timeout): tell the device it is saved.
             await conn.send({"type": "saved", "recording_id": rec_id,
                              "duration_ms": rec["duration_ms"],
@@ -344,20 +407,11 @@ class Gateway:
             await s.finish(interrupted=True)
 
     async def handle(self, ws: WebSocket) -> None:
-        token = _bearer(ws)
-        device = self.store.device_by_token_hash(hash_token(token)) if token else None
-        await ws.accept()
-        if not device:
-            log.warning("device ws rejected: bad token from %s", ws.client)
-            try:
-                await ws.send_text(json.dumps(
-                    {"type": "error", "code": "auth", "msg": "device not paired"}))
-                await ws.close(code=1008)
-            except Exception:
-                pass
+        device_id = await self.authenticate(ws)
+        if device_id is None:
             return
-        conn = DeviceConn(ws, device["id"])
-        log.info("device %s connected from %s", device["id"], ws.client)
+        conn = DeviceConn(ws, device_id)
+        log.info("%s %s connected from %s", self.peer, device_id, ws.client)
         session: Optional[RecordingSession] = None
         try:
             while True:
@@ -394,16 +448,20 @@ class Gateway:
                                      "duration_ms": duration, "sentences": n})
                     session = None
                 elif kind == "resume":
-                    session = await self.resume(conn, obj)
+                    resumed = await self.resume(conn, obj)
+                    # A failed resume (resume_failed / saved) must not drop this
+                    # connection's active recording, or it would never be detached.
+                    if resumed is not None:
+                        session = resumed
                 elif kind == "ping":
                     await conn.send({"type": "pong"})
                 else:
-                    log.info("device %s: unknown message type %r", device["id"], kind)
+                    log.info("%s %s: unknown message type %r", self.peer, device_id, kind)
         except WebSocketDisconnect:
             pass
         finally:
             conn.alive = False
-            log.info("device %s disconnected", device["id"])
+            log.info("%s %s disconnected", self.peer, device_id)
             if session is not None and not session.finished and session.conn is conn:
                 session.detach()
 
