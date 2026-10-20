@@ -1,10 +1,11 @@
 <template>
   <div>
-    <router-link :to="backTo">← 返回列表</router-link>
-    <p v-if="error" class="error">{{ error }}</p>
+    <router-link :to="backTo" class="back-link">← 返回列表</router-link>
+    <p v-if="error" class="alert error">{{ error }}</p>
     <template v-if="rec">
-      <div class="card">
-        <div class="row">
+      <div class="card head-card">
+        <p class="eyebrow">{{ rec.kind === 'note' ? 'Note' : 'Meeting' }}</p>
+        <div class="row title-row">
           <template v-if="editingTitle">
             <input v-model="titleDraft" class="title-input" @keyup.enter="saveTitle"
                    @keyup.esc="editingTitle = false" />
@@ -12,30 +13,31 @@
             <button @click="editingTitle = false">取消</button>
           </template>
           <template v-else>
-            <h2 class="title">{{ rec.title }}</h2>
+            <h1 class="title">{{ rec.title }}</h1>
             <button class="link" @click="startTitle">改标题</button>
           </template>
           <span class="spacer" />
           <a class="btn" :href="api.exportUrl(rec.id)">导出 TXT</a>
           <button class="danger" :disabled="rec.live" @click="remove">删除</button>
         </div>
-        <div class="row muted" style="margin-top: 6px">
-          <span>{{ fmtTime(rec.started_at) }}</span>
-          <span>时长 {{ fmtDuration(rec.duration_ms) }}</span>
+        <div class="row meta">
+          <span class="mono">{{ fmtTime(rec.started_at) }}</span>
+          <span class="mono">时长 {{ fmtDuration(rec.duration_ms) }}</span>
           <span class="badge" :class="rec.status">{{ STATUS_TEXT[rec.status] || rec.status }}</span>
           <span v-if="rec.device_id === BROWSER_DEVICE" class="badge source">浏览器</span>
         </div>
-        <p v-if="rec.error" class="error">识别异常：{{ rec.error }}</p>
+        <p v-if="rec.error" class="alert error">识别异常：{{ rec.error }}</p>
         <audio ref="audio" controls preload="metadata" :src="audioSrc" class="player"
                @timeupdate="onTime" />
       </div>
 
       <div class="card">
-        <div class="muted" style="margin-bottom: 8px">
-          说话人（改名会同步到整份录音；同一个人被拆成多个时可“合并到”另一位）
+        <p class="section-label">Speakers · 说话人</p>
+        <div class="muted hint">
+          改名会同步到整份录音；同一个人被拆成多个时可“合并到”另一位
           <span v-if="rec.live">· 录制中不能合并</span>
         </div>
-        <div class="row">
+        <div class="row chips">
           <div v-for="s in rec.speakers" :key="s.idx" class="speaker">
             <span class="dot" :style="{ background: speakerColor(s.idx) }" />
             <template v-if="editingSpeaker === s.idx">
@@ -58,7 +60,9 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card transcript">
+        <p class="section-label">Transcript · 转写<span v-if="rec.sentences.length" class="mono">
+          · {{ rec.sentences.length }}</span></p>
         <div v-if="!rec.sentences.length" class="empty">暂无转写内容</div>
         <div v-for="s in rec.sentences" :key="s.id" class="sentence"
              :class="{ current: s.id === currentId }">
@@ -246,16 +250,54 @@ onUnmounted(() => clearInterval(timer))
 </script>
 
 <style scoped>
-.title { margin: 0; font-size: 20px; }
-.title-input { font-size: 18px; min-width: 280px; }
-.player { width: 100%; margin-top: 12px; }
-.speaker { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid #e5e7eb; border-radius: 16px; }
-.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.sentence { padding: 10px 8px; border-bottom: 1px solid #f3f4f6; border-radius: 6px; }
-.sentence.current { background: #eff6ff; }
+.head-card { padding-block: 18px; }
+.head-card .eyebrow { margin-bottom: 4px; }
+.title-row { gap: 8px; }
+.title {
+  margin: 0; font-size: 24px; font-weight: 650; line-height: 1.25; letter-spacing: -0.02em;
+  min-width: 0; overflow-wrap: anywhere;
+}
+.title-input { font-size: 17px; min-width: 280px; flex: 1; }
+.meta { margin-top: 8px; gap: 6px 14px; font-size: var(--fs-meta); color: var(--muted); }
+.head-card .alert { margin: 12px 0 0; }
+.player { display: block; width: 100%; margin-top: 16px; }
+
+.hint { margin-bottom: 12px; }
+.chips { gap: 8px; }
+.speaker {
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 12px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--bg);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.speaker input { min-height: 28px; padding: 2px 8px; }
+
+.sentence {
+  position: relative; padding: 10px 12px; border-radius: var(--radius);
+  border-bottom: 1px solid var(--border);
+}
+.sentence:last-child { border-bottom: none; }
+.sentence.current { background: var(--accent-soft); border-bottom-color: transparent; }
+.sentence.current::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
+  background: var(--accent);
+}
 .head { gap: 8px; margin-bottom: 4px; }
-.time { font-family: monospace; }
-.text { cursor: pointer; line-height: 1.6; white-space: pre-wrap; }
-select { padding: 2px 6px; font-weight: 600; }
-select.merge { font-weight: normal; font-size: 12px; padding: 1px 4px; }
+.time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.text { cursor: pointer; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sentence.current .time { color: var(--accent-strong); }
+select {
+  min-height: 28px; padding: 2px 6px; font-weight: 600; font-size: 13px;
+  border-color: transparent; background: transparent;
+}
+.sentence select:hover, .sentence select:focus { border-color: var(--border-strong); background: var(--surface); }
+select.merge {
+  font-weight: normal; font-size: 12px; padding: 1px 4px; min-height: 26px;
+  border-color: var(--border); background: var(--surface); color: var(--muted);
+}
+@media (max-width: 767px) {
+  .title { font-size: 20px; }
+  .title-input { min-width: 0; width: 100%; }
+  select, select.merge { min-height: 40px; }
+  .speaker { flex-wrap: wrap; border-radius: var(--radius); }
+}
 </style>

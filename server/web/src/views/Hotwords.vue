@@ -1,31 +1,39 @@
 <template>
   <div>
-    <h2 style="margin: 0 0 12px">热词</h2>
+    <header class="page-head">
+      <div class="titles">
+        <p class="eyebrow">Hotwords</p>
+        <h1>热词</h1>
+        <p v-if="state.items.length" class="page-sub mono">{{ state.items.length }} 个词</p>
+      </div>
+    </header>
     <div class="card">
-      <div class="row">
-        <strong>额度</strong>
-        <span :class="{ over: inactiveCount }">已占用 {{ state.used }} / {{ state.budget }}</span>
-        <span class="muted">（估算 token）</span>
+      <div class="row quota">
+        <span class="section-label">额度</span>
+        <span class="used mono" :class="{ over: inactiveCount }">
+          {{ state.used }}<span class="of"> / {{ state.budget }}</span>
+        </span>
+        <span class="muted">估算 token</span>
         <span class="spacer" />
         <span v-if="inactiveCount" class="muted over">{{ inactiveCount }} 个词超出额度，未生效</span>
       </div>
-      <div class="bar"><div class="fill" :style="{ width: usedPct + '%' }" /></div>
+      <div class="progress bar" :class="{ over: inactiveCount }"><span :style="{ width: usedPct + '%' }" /></div>
       <p class="muted hint">
         笔记和会议共用。识别时按列表从上往下取词，放不下的词标为“未生效”，不会发给识别服务；
         越重要的词请排在越前面。改动只影响之后开始的录音。
       </p>
       <textarea v-model="input" rows="4" placeholder="一行一个词，可一次粘贴多行（每个词 1–32 个字）" />
-      <div class="row" style="margin-top: 8px">
+      <div class="row add-row">
         <button class="primary" :disabled="busy || !input.trim()" @click="add">添加</button>
         <span v-if="message" class="muted">{{ message }}</span>
         <span v-if="error" class="error">{{ error }}</span>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card list">
       <div v-if="loaded && !state.items.length" class="empty">还没有热词。</div>
       <div v-for="(h, i) in state.items" :key="h.id" class="hw row" :class="{ inactive: !h.active }">
-        <span class="muted idx">{{ i + 1 }}</span>
+        <span class="idx mono">{{ String(i + 1).padStart(2, '0') }}</span>
         <template v-if="editingId === h.id">
           <input v-model="draft" class="word-input" maxlength="64" @keyup.enter="save(h)"
                  @keyup.esc="editingId = null" />
@@ -34,7 +42,7 @@
         </template>
         <template v-else>
           <span class="word">{{ h.word }}</span>
-          <span class="muted">{{ h.tokens }} token</span>
+          <span class="muted mono">{{ h.tokens }} token</span>
           <span class="badge" :class="h.active ? 'done' : 'off'">{{ h.active ? '生效' : '未生效' }}</span>
           <span class="spacer" />
           <button class="link" :disabled="busy || i === 0" title="上移" @click="move(i, -1)">上移</button>
@@ -167,17 +175,23 @@ onMounted(load)
 </script>
 
 <style scoped>
-.bar { height: 6px; background: #e5e7eb; border-radius: 3px; margin: 10px 0 4px; overflow: hidden; }
-.fill { height: 100%; background: #2563eb; }
-.over { color: #b45309; }
-.hint { margin: 8px 0 10px; line-height: 1.6; }
-.hw { padding: 8px 4px; border-bottom: 1px solid #f3f4f6; gap: 10px; }
+.quota { gap: 10px; align-items: baseline; }
+.quota .section-label { margin: 0; }
+.used { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.of { font-size: 14px; font-weight: 400; color: var(--muted); }
+.over { color: var(--warn); }
+.bar { margin: 10px 0 4px; }
+.hint { margin: 10px 0 12px; line-height: 1.7; }
+.add-row { margin-top: 10px; }
+.list { padding-block: 6px; }
+.hw { padding: 8px 4px; border-bottom: 1px solid var(--border); gap: 10px; min-height: 52px; }
 .hw:last-child { border-bottom: none; }
-.hw.inactive .word { color: #9ca3af; }
-.idx { width: 24px; text-align: right; }
-.word { font-size: 16px; }
-.word-input { min-width: 200px; }
-.badge.off { background: #f3f4f6; color: #9ca3af; }
-.danger-link { color: #b91c1c; }
-button.link:disabled { color: #9ca3af; cursor: default; }
+.hw.inactive .word { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.idx { width: 26px; text-align: right; font-size: 12px; color: var(--muted); }
+.word { font-size: 16px; overflow-wrap: anywhere; min-width: 0; }
+.word-input { min-width: 200px; flex: 1; }
+@media (max-width: 767px) {
+  .word-input { min-width: 0; width: 100%; }
+  .hw { gap: 6px 8px; }
+}
 </style>

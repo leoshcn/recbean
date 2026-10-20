@@ -37,8 +37,10 @@ export const STATUS_TEXT = {
   interrupted: '已中断',
 }
 
-const COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4b5563']
+// 8 theme-aware speaker colors defined as --spk-1..8 in style.css; usable in inline
+// `color` / `background` styles
+const SPEAKER_COLORS = 8
 
 export function speakerColor(idx) {
-  return COLORS[(Math.max(1, idx) - 1) % COLORS.length]
+  return `var(--spk-${((Math.max(1, idx) - 1) % SPEAKER_COLORS) + 1})`
 }

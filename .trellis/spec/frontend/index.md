@@ -20,6 +20,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [State Management](./state-management.md) | Local state, global state, server state | To fill |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
+| [Theming, Brand & Layout](./theming-and-brand.md) | Design tokens, light/dark theme, BrandMark, app shell, responsive & VI rules for `server/web` | Done |
 
 ---
 

@@ -1,60 +1,68 @@
 <template>
   <div>
-    <router-link to="/notes">← 全部笔记</router-link>
-    <p v-if="error" class="error">{{ error }}</p>
-    <div class="card">
-      <div class="row">
-        <h2 class="title">{{ fmtDay(date) }} 笔记</h2>
-        <span class="muted" v-if="segments.length">
+    <router-link to="/notes" class="back-link">← 全部笔记</router-link>
+    <header class="page-head">
+      <div class="titles">
+        <p class="eyebrow">Note · {{ fmtDay(date).slice(date.length + 1) || 'Day' }}</p>
+        <h1><span class="mono">{{ date }}</span> 笔记</h1>
+        <p v-if="segments.length" class="page-sub mono">
           {{ segments.length }} 段 · 共 {{ fmtDuration(totalMs) }}
-        </span>
-        <span class="spacer" />
+        </p>
+      </div>
+      <div class="actions">
         <button :disabled="!fullText" @click="copyAll">{{ copied ? '已复制' : '复制全文' }}</button>
         <a class="btn" :href="api.noteDayExportUrl(date)">导出 TXT</a>
       </div>
-      <div v-if="copyFallback" class="fallback">
-        <div class="muted">浏览器不允许自动复制，请按 Ctrl+C（手机长按）复制下面的内容：</div>
-        <textarea ref="fallbackEl" :value="fullText" rows="6" readonly @focus="$event.target.select()" />
-        <button @click="copyFallback = false">关闭</button>
-      </div>
+    </header>
+    <p v-if="error" class="alert error">{{ error }}</p>
+    <div v-if="copyFallback" class="card fallback">
+      <div class="muted">浏览器不允许自动复制，请按 Ctrl+C（手机长按）复制下面的内容：</div>
+      <textarea ref="fallbackEl" :value="fullText" rows="6" readonly @focus="$event.target.select()" />
+      <button @click="copyFallback = false">关闭</button>
     </div>
 
     <div v-if="loaded && !segments.length" class="card empty">这一天没有笔记。</div>
     <audio ref="audio" preload="none" @ended="playingId = null" />
 
-    <div v-for="seg in segments" :key="seg.id" class="card seg">
-      <div class="row head">
-        <strong class="time">{{ seg.time }}</strong>
-        <span class="muted">{{ fmtDuration(seg.duration_ms) }}</span>
-        <span v-if="seg.live" class="badge recording">录音中</span>
-        <span v-else-if="seg.status !== 'done'" class="badge" :class="seg.status">
-          {{ STATUS_TEXT[seg.status] || seg.status }}
-        </span>
-        <span class="spacer" />
-        <button class="link" :disabled="seg.live" @click="togglePlay(seg)">
-          {{ playingId === seg.id ? '■ 停止' : '▶ 播放' }}
-        </button>
-        <button class="link danger-link" :disabled="seg.live" @click="remove(seg)">删除本段</button>
-      </div>
-      <p v-if="seg.error" class="error small">识别异常：{{ seg.error }}</p>
-      <div v-if="!seg.sentences.length" class="muted">（暂无转写）</div>
-      <div v-for="s in seg.sentences" :key="s.id" class="sentence">
-        <template v-if="editingId === s.id">
-          <textarea v-model="draft" rows="2" @keydown.enter.exact.prevent="saveEdit(seg, s)"
-                    @keyup.esc="editingId = null" />
-          <div class="row">
-            <button class="primary" @click="saveEdit(seg, s)">保存</button>
-            <button @click="editingId = null">取消</button>
-            <span class="muted">Enter 保存，Esc 取消</span>
-          </div>
-        </template>
-        <div v-else class="row line">
-          <span class="text">{{ s.text }}</span>
-          <span v-if="s.edited" class="muted">已编辑</span>
-          <button class="link edit" @click="startEdit(s)">编辑</button>
+    <ol v-if="segments.length" class="timeline">
+      <li v-for="seg in segments" :key="seg.id" class="seg" :class="{ playing: playingId === seg.id }">
+        <div class="rail">
+          <span class="time mono">{{ seg.time }}</span>
+          <span class="dur mono">{{ fmtDuration(seg.duration_ms) }}</span>
         </div>
-      </div>
-    </div>
+        <div class="card seg-card">
+          <div class="row head">
+            <span v-if="seg.live" class="badge recording">录音中</span>
+            <span v-else-if="seg.status !== 'done'" class="badge" :class="seg.status">
+              {{ STATUS_TEXT[seg.status] || seg.status }}
+            </span>
+            <span class="spacer" />
+            <button class="link" :disabled="seg.live" @click="togglePlay(seg)">
+              {{ playingId === seg.id ? '■ 停止' : '▶ 播放' }}
+            </button>
+            <button class="link danger-link" :disabled="seg.live" @click="remove(seg)">删除本段</button>
+          </div>
+          <p v-if="seg.error" class="error small">识别异常：{{ seg.error }}</p>
+          <div v-if="!seg.sentences.length" class="muted">（暂无转写）</div>
+          <div v-for="s in seg.sentences" :key="s.id" class="sentence">
+            <template v-if="editingId === s.id">
+              <textarea v-model="draft" rows="2" @keydown.enter.exact.prevent="saveEdit(seg, s)"
+                        @keyup.esc="editingId = null" />
+              <div class="row edit-actions">
+                <button class="primary" @click="saveEdit(seg, s)">保存</button>
+                <button @click="editingId = null">取消</button>
+                <span class="muted">Enter 保存，Esc 取消</span>
+              </div>
+            </template>
+            <div v-else class="row line">
+              <span class="text">{{ s.text }}</span>
+              <span v-if="s.edited" class="muted">已编辑</span>
+              <button class="link edit" @click="startEdit(s)">编辑</button>
+            </div>
+          </div>
+        </div>
+      </li>
+    </ol>
   </div>
 </template>
 
@@ -190,17 +198,39 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.title { margin: 0; font-size: 20px; }
-.head { gap: 10px; margin-bottom: 6px; }
-.time { font-family: monospace; font-size: 16px; }
-.sentence { padding: 4px 0; }
+.timeline { list-style: none; margin: 0; padding: 0; }
+.seg {
+  position: relative; display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: var(--gap-sm);
+}
+/* vertical rail line + node */
+.seg::before {
+  content: ''; position: absolute; left: 82px; top: 0; bottom: 0; width: 1px; background: var(--border);
+}
+.seg::after {
+  content: ''; position: absolute; left: 79px; top: 22px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--muted);
+}
+.seg.playing::after { background: var(--accent); border-color: var(--accent); }
+.rail { display: flex; flex-direction: column; align-items: flex-end; padding: 14px 10px 0 0; }
+.time { font-size: 16px; font-weight: 600; }
+.seg.playing .time { color: var(--accent); }
+.dur { font-size: 12px; color: var(--muted); }
+.seg-card { margin-left: 14px; padding-block: 12px 14px; }
+.head { gap: 6px; margin-bottom: 4px; min-height: 28px; }
+.sentence { padding: 3px 0; }
 .line { gap: 8px; flex-wrap: nowrap; align-items: baseline; }
-.text { line-height: 1.7; white-space: pre-wrap; flex: 1; }
-.edit { visibility: hidden; flex-shrink: 0; }
-.sentence:hover .edit { visibility: visible; }
-@media (hover: none) { .edit { visibility: visible; } }
-.danger-link { color: #b91c1c; }
-button.link:disabled { color: #9ca3af; cursor: default; }
-.fallback { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.text { line-height: 1.75; white-space: pre-wrap; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+/* opacity (not visibility) so the button stays reachable by keyboard */
+.edit { opacity: 0; flex-shrink: 0; }
+.sentence:hover .edit, .edit:focus-visible { opacity: 1; }
+@media (hover: none) { .edit { opacity: 1; } }
+.edit-actions { margin-top: 6px; gap: 8px; }
+.fallback { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .small { font-size: 13px; margin: 4px 0; }
+@media (max-width: 767px) {
+  .seg { grid-template-columns: 1fr; gap: 0; }
+  .seg::before, .seg::after { display: none; }
+  .rail { flex-direction: row; align-items: baseline; gap: 8px; padding: 8px 2px 6px; }
+  .seg-card { margin-left: 0; }
+}
 </style>

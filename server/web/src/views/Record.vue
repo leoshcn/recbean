@@ -1,37 +1,90 @@
 <template>
-  <div>
-    <div class="row" style="margin-bottom: 12px">
-      <h2 style="margin: 0">浏览器录音</h2>
-      <span class="spacer" />
-      <span v-if="connText" class="badge" :class="connClass">{{ connText }}</span>
-    </div>
-
-    <div v-if="!secure" class="card warn">
-      请通过 HTTPS（群晖反代地址）访问本页面。浏览器只允许在安全连接下使用麦克风和屏幕共享，
-      当前地址 {{ origin }} 无法录音。
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <label class="opt">
-          <input v-model="useMic" type="checkbox" :disabled="busy" /> 麦克风
-        </label>
-        <select v-model="micId" :disabled="busy || !useMic" class="mic-select">
-          <option value="">默认麦克风</option>
-          <option v-for="m in mics" :key="m.id" :value="m.id">{{ m.label }}</option>
-        </select>
-        <label class="opt">
-          <input v-model="useSys" type="checkbox" :disabled="busy || !sysSupported" /> 系统声音
-        </label>
+  <div class="record">
+    <header class="page-head">
+      <div class="titles">
+        <p class="eyebrow">Browser recording</p>
+        <h1>浏览器录音</h1>
+        <p class="page-sub">录制麦克风与系统声音，实时转写，结束后保存为会议录音。</p>
       </div>
-      <p v-if="secure && !sysSupported" class="muted">
-        当前浏览器不支持共享系统声音，只能录制麦克风。请在 Windows 上使用 Chrome 或 Edge。
-      </p>
-      <p v-else-if="useSys && !busy" class="muted">
-        开始后在弹窗中选择“整个屏幕”，并勾选“共享系统音频”。建议佩戴耳机，避免外放的声音被麦克风重复录入。
-      </p>
+      <div class="actions">
+        <span v-if="connText" class="badge" :class="connClass">{{ connText }}</span>
+      </div>
+    </header>
 
-      <div v-if="state === 'needSys'" class="card warn prompt">
+    <!-- narrow screens: recording is desktop-only; the console below is display:none there,
+         so none of its controls can be reached -->
+    <div class="card empty narrow-notice">
+      <BrandMark :size="40" class="notice-mark" />
+      请在桌面浏览器使用录音。
+    </div>
+
+    <div class="console-wrap">
+      <div v-if="!secure" class="alert warn">
+        请通过 HTTPS（群晖反代地址）访问本页面。浏览器只允许在安全连接下使用麦克风和屏幕共享，
+        当前地址 {{ origin }} 无法录音。
+      </div>
+
+      <section class="card console">
+        <div class="stage" :class="{ live: state === 'recording' }">
+          <div class="stage-top mono">
+            <span class="status"><span class="rec-dot" />{{ stageText }}</span>
+            <span>16 kHz · MONO</span>
+          </div>
+          <BrandMark class="stage-mark" :size="110" :state="markState" :label="`录音状态：${stageText}`" />
+          <div class="duration mono" aria-live="off">{{ fmtDuration(durationMs) }}</div>
+          <div class="controls">
+            <button v-if="!busy" class="rec-btn start" :disabled="!canStart" @click="start">
+              <span class="disc" aria-hidden="true"><span class="glyph" /></span>
+              <span class="cap">开始录音</span>
+            </button>
+            <button v-else class="rec-btn stop" :disabled="state === 'stopping' || state === 'acquiring' || state === 'needSys'"
+                    @click="stop">
+              <span class="disc" aria-hidden="true"><span class="glyph" /></span>
+              <span class="cap">{{ state === 'stopping' ? '正在保存…' : '停止并保存' }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="side">
+          <p class="section-label">Sources · 音源</p>
+          <div class="sources">
+            <div class="src">
+              <label class="opt">
+                <input v-model="useMic" type="checkbox" :disabled="busy" /> 麦克风
+              </label>
+              <select v-model="micId" :disabled="busy || !useMic" class="mic-select">
+                <option value="">默认麦克风</option>
+                <option v-for="m in mics" :key="m.id" :value="m.id">{{ m.label }}</option>
+              </select>
+            </div>
+            <div class="src">
+              <label class="opt">
+                <input v-model="useSys" type="checkbox" :disabled="busy || !sysSupported" /> 系统声音
+              </label>
+            </div>
+          </div>
+          <p v-if="secure && !sysSupported" class="muted hint">
+            当前浏览器不支持共享系统声音，只能录制麦克风。请在 Windows 上使用 Chrome 或 Edge。
+          </p>
+          <p v-else-if="useSys && !busy" class="muted hint">
+            开始后在弹窗中选择“整个屏幕”，并勾选“共享系统音频”。建议佩戴耳机，避免外放的声音被麦克风重复录入。
+          </p>
+
+          <p class="section-label levels-label">Levels · 电平</p>
+          <div class="levels">
+            <div class="level-row" :class="{ off: !hasMic }">
+              <span class="muted">麦克风</span>
+              <span class="progress segmented meter"><span :style="{ width: pct(level.mic) }" /></span>
+            </div>
+            <div class="level-row" :class="{ off: !hasSys }">
+              <span class="muted">系统声音</span>
+              <span class="progress segmented meter"><span :style="{ width: pct(level.sys) }" /></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div v-if="state === 'needSys'" class="alert warn prompt">
         <div>未获取到系统声音（取消了共享，或共享时没有选择“整个屏幕”并勾选“共享系统音频”）。</div>
         <div class="row" style="margin-top: 8px">
           <button class="primary" @click="pickSystem">重新选择共享</button>
@@ -40,46 +93,33 @@
         </div>
       </div>
 
-      <div class="row controls">
-        <button v-if="!busy" class="primary big" :disabled="!canStart" @click="start">开始录音</button>
-        <button v-else class="danger big" :disabled="state === 'stopping' || state === 'acquiring' || state === 'needSys'"
-                @click="stop">
-          {{ state === 'stopping' ? '正在保存…' : '停止并保存' }}
-        </button>
-        <span class="duration">{{ fmtDuration(durationMs) }}</span>
-        <div class="levels">
-          <div class="level-row" :class="{ off: !hasMic }">
-            <span class="muted">麦克风</span>
-            <span class="meter"><span :style="{ width: pct(level.mic) }" /></span>
-          </div>
-          <div class="level-row" :class="{ off: !hasSys }">
-            <span class="muted">系统声音</span>
-            <span class="meter"><span :style="{ width: pct(level.sys) }" /></span>
-          </div>
-        </div>
-      </div>
-
-      <p v-for="(w, i) in warnings" :key="i" class="warn-line">{{ w }}</p>
-      <p v-if="error" class="error">{{ error }}</p>
-      <p v-if="state === 'saved'" class="ok">
+      <p v-for="(w, i) in warnings" :key="i" class="alert warn">{{ w }}</p>
+      <p v-if="error" class="alert error">{{ error }}</p>
+      <p v-if="state === 'saved'" class="alert ok">
         已保存。<router-link :to="`/r/${encodeURIComponent(recId)}`">查看录音详情 →</router-link>
       </p>
-      <p v-if="state === 'interrupted' && recId" class="error">
+      <p v-if="state === 'interrupted' && recId" class="alert error">
         录音已中断并保存。<router-link :to="`/r/${encodeURIComponent(recId)}`">查看录音详情 →</router-link>
       </p>
-    </div>
 
-    <div class="card">
-      <div class="muted" style="margin-bottom: 8px">实时转写</div>
-      <div ref="list" class="transcript">
-        <div v-if="!finals.length && !partial" class="empty">{{ busy ? '等待语音…' : '开始录音后在这里显示转写' }}</div>
-        <div v-for="s in finals" :key="s.idx" class="sentence">
-          <span class="spk" :style="{ color: speakerColor(s.speaker) }">说话人{{ s.speaker }}</span>
-          <span class="muted time">{{ fmtDuration(s.start_ms) }}</span>
-          <div>{{ s.text }}</div>
+      <section class="card live-panel">
+        <div class="row panel-head">
+          <p class="section-label">Live transcript · 实时转写</p>
+          <span class="spacer" />
+          <span v-if="finals.length" class="muted mono">{{ finals.length }} 句</span>
         </div>
-        <div v-if="partial" class="sentence partial">{{ partial }}</div>
-      </div>
+        <div ref="list" class="transcript">
+          <div v-if="!finals.length && !partial" class="empty">{{ busy ? '等待语音…' : '开始录音后在这里显示转写' }}</div>
+          <div v-for="s in finals" :key="s.idx" class="sentence">
+            <div class="sentence-head">
+              <span class="spk" :style="{ color: speakerColor(s.speaker) }">说话人{{ s.speaker }}</span>
+              <span class="muted time">{{ fmtDuration(s.start_ms) }}</span>
+            </div>
+            <div>{{ s.text }}</div>
+          </div>
+          <div v-if="partial" class="sentence partial">{{ partial }}</div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
@@ -92,6 +132,7 @@ import {
   openSystemAudio, stopStream,
 } from '../recorder'
 import { fmtDuration, speakerColor } from '../util'
+import BrandMark from '../components/BrandMark.vue'
 
 const RING_FRAMES = 300 // 60 s of 200 ms frames kept for resend after a reconnect
 const BACKOFF_MS = [1000, 2000, 4000, 5000]
@@ -145,6 +186,14 @@ const connText = computed(() => ({
 const connClass = computed(() => ({
   recording: 'done', stopping: 'done', reconnecting: 'asr_error', interrupted: 'interrupted',
 })[state.value] || '')
+// presentational only: console status line and logo state (recording = flowing slit,
+// any transitional state = slit pulled straight, idle/saved/interrupted = standard mark)
+const STAGE_TEXT = {
+  idle: 'Ready', acquiring: '获取音源…', needSys: '等待共享', connecting: '连接中…', recording: 'REC',
+  reconnecting: '重连中…', stopping: '保存中…', saved: '已保存', interrupted: '已中断',
+}
+const stageText = computed(() => STAGE_TEXT[state.value] || '')
+const markState = computed(() => (state.value === 'recording' ? 'rec' : busy.value ? 'flat' : 'idle'))
 
 function pct(v) {
   // peak → rough dB-ish scale so normal speech moves the bar visibly
@@ -501,24 +550,104 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.warn { background: #fffbeb; border-color: #fcd34d; color: #92400e; }
-.prompt { margin: 12px 0 0; }
-.opt { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
-.mic-select { max-width: 280px; }
-.controls { margin-top: 16px; gap: 20px; }
-button.big { font-size: 16px; padding: 8px 20px; }
-.duration { font-family: monospace; font-size: 24px; min-width: 90px; }
-.levels { display: flex; flex-direction: column; gap: 6px; }
-.level-row { display: flex; align-items: center; gap: 8px; }
-.level-row .muted { width: 56px; }
+.narrow-notice { display: none; }
+.narrow-notice .notice-mark { margin: 0 auto 12px; }
+
+/* ---- console ---- */
+.console {
+  display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 1fr); gap: var(--gap-md);
+  padding: 12px;
+}
+/* the stage is always the brand's dark field: Ink ground, Bean mark, Mist text */
+.stage {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  padding: 18px 20px 22px; border-radius: 12px;
+  background: var(--ink); color: var(--mist);
+  border: 1px solid color-mix(in oklch, var(--mist) 8%, transparent);
+}
+.stage-top {
+  align-self: stretch; display: flex; justify-content: space-between; gap: 12px;
+  font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: color-mix(in oklch, var(--mist) 64%, var(--ink));
+}
+.status { display: inline-flex; align-items: center; gap: 8px; }
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: color-mix(in oklch, var(--mist) 40%, var(--ink));
+}
+.live .status { color: var(--mist); }
+.live .rec-dot { background: var(--signal); animation: rec-blink 1.6s ease-in-out infinite; }
+@keyframes rec-blink { 50% { opacity: .35; } }
+.stage .stage-mark { color: var(--bean); margin: 22px 0 10px; }
+.duration {
+  font-size: 44px; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; color: var(--mist);
+}
+.controls { margin-top: 18px; }
+
+/* big round record button: disc + caption */
+.rec-btn {
+  flex-direction: column; gap: 8px; min-height: 0; padding: 4px;
+  border: none; background: transparent; color: var(--mist);
+}
+.rec-btn:hover:not(:disabled), .rec-btn:disabled:hover { background: transparent; border: none; }
+.rec-btn:focus-visible { outline: none; }
+.rec-btn:focus-visible .disc { outline: 2px solid var(--bean); outline-offset: 3px; }
+.disc {
+  display: grid; place-items: center; width: 76px; height: 76px; border-radius: 50%;
+  transition: transform .15s, box-shadow .15s, background .15s;
+}
+.cap { font-size: 13px; color: color-mix(in oklch, var(--mist) 80%, var(--ink)); }
+.start .disc { background: var(--bean); box-shadow: 0 0 0 6px color-mix(in oklch, var(--bean) 16%, transparent); }
+.start .glyph { width: 24px; height: 24px; border-radius: 50%; background: var(--ink); }
+.start:hover:not(:disabled) .disc { transform: scale(1.04); box-shadow: 0 0 0 9px color-mix(in oklch, var(--bean) 20%, transparent); }
+.stop .disc { border: 2px solid var(--signal); background: color-mix(in oklch, var(--signal) 12%, transparent); }
+.stop .glyph { width: 22px; height: 22px; border-radius: 4px; background: var(--signal); }
+.stop:hover:not(:disabled) .disc { background: color-mix(in oklch, var(--signal) 22%, transparent); }
+.rec-btn:disabled { opacity: .45; }
+
+/* ---- side: sources + levels ---- */
+.side { padding: 10px 8px 8px 0; min-width: 0; }
+.sources { display: flex; flex-direction: column; gap: 10px; }
+.src {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+}
+.opt { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.mic-select { flex: 1; min-width: 0; max-width: 100%; }
+.hint { margin: 10px 0 0; line-height: 1.6; }
+.levels-label { margin-top: var(--gap-md); }
+.levels { display: flex; flex-direction: column; gap: 10px; }
+.level-row { display: flex; align-items: center; gap: 10px; transition: opacity .15s; }
+.level-row .muted { width: 60px; flex: none; }
 .level-row.off { opacity: 0.4; }
-.meter { width: 180px; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; display: inline-block; }
-.meter span { display: block; height: 100%; background: #16a34a; transition: width 0.08s linear; }
-.warn-line { color: #92400e; margin: 8px 0 0; }
-.ok { color: #166534; }
+.meter { flex: 1; height: 10px; }
+
+/* ---- messages ---- */
+.console-wrap > .alert { margin: 0 0 var(--gap-sm); }
+.prompt .row { gap: 8px; }
+
+/* ---- live transcript ---- */
+.live-panel { margin-top: var(--gap-sm); }
+.panel-head { margin-bottom: 4px; }
+.panel-head .section-label { margin: 0; }
 .transcript { max-height: 420px; overflow-y: auto; }
-.sentence { padding: 6px 4px; border-bottom: 1px solid #f3f4f6; line-height: 1.6; }
-.sentence.partial { color: #6b7280; font-style: italic; }
-.spk { font-weight: 600; margin-right: 8px; }
-.time { font-family: monospace; }
+.sentence { padding: 8px 4px; border-bottom: 1px solid var(--border); line-height: 1.7; overflow-wrap: anywhere; }
+.sentence:last-child { border-bottom: none; }
+.sentence-head { display: flex; align-items: baseline; gap: 8px; }
+.sentence.partial { color: var(--muted); font-style: italic; }
+.sentence.partial::after {
+  content: ''; display: inline-block; width: 7px; height: 1em; margin-left: 3px; vertical-align: -2px;
+  background: var(--accent); animation: rec-blink 1s steps(2) infinite;
+}
+.spk { font-weight: 600; font-size: 13px; }
+.time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+
+@media (max-width: 900px) {
+  .console { grid-template-columns: 1fr; }
+  .side { padding: 4px 8px 8px; }
+}
+@media (max-width: 767px) {
+  .console-wrap { display: none; }
+  .narrow-notice { display: block; }
+}
 </style>

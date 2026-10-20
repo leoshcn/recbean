@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>录音豆 Recbean · 标志与 App Icon</title>
+  <style>
+    :root {
+      --bg:      oklch(98.6% 0.004 155);
+      --surface: oklch(100% 0 0);
+      --fg:      oklch(20% 0.02 165);
+      --muted:   oklch(48% 0.015 165);
+      --border:  oklch(91% 0.008 160);
+      --accent:  oklch(52% 0.15 152);   /* 深豆绿：浅底上的标志与强调 */
+
+      /* 品牌色（本次交付内容本身） */
+      --bean:   oklch(78% 0.2 148);     /* 豆绿：深底标志 / App Icon 底色 */
+      --ink:    oklch(22% 0.035 165);   /* 墨绿：深色底 */
+      --mist:   oklch(96.5% 0.012 150); /* 雾白：深底文字 */
+      --signal: oklch(64% 0.21 27);     /* 录音指示：仅用于 REC 状态点 */
+
+      --accent-soft: color-mix(in oklch, var(--accent) 14%, transparent);
+      --fg-soft:     color-mix(in oklch, var(--fg) 6%, transparent);
+      --ink-muted:   color-mix(in oklch, var(--mist) 64%, var(--ink));
+
+      --font-display: 'SF Pro Display', 'Segoe UI Variable Display', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', system-ui, sans-serif;
+      --font-body:    'SF Pro Text', 'Segoe UI Variable Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --font-mono:    ui-monospace, 'JetBrains Mono', 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+
+      --fs-h1: clamp(44px, 6vw, 76px);
+      --fs-h2: clamp(30px, 3.6vw, 44px);
+      --fs-h3: 20px;
+      --fs-lead: 18px;
+      --fs-body: 16px;
+      --fs-meta: 13px;
+      --gap-xs: 8px; --gap-sm: 12px; --gap-md: 20px; --gap-lg: 32px; --gap-xl: 56px; --gap-2xl: 96px;
+      --container: 1120px;
+      --gutter: 32px;
+      --radius: 10px;
+      --radius-lg: 16px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: var(--fs-body); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+    img, svg { display: block; max-width: 100%; }
+    a { color: inherit; text-decoration: none; }
+    button { font: inherit; cursor: pointer; }
+    p { text-wrap: pretty; }
+    h1, h2, h3 { text-wrap: balance; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+
+    .container { max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
+    .section { padding-block: clamp(56px, 8vw, var(--gap-2xl)); }
+    .section + .section { border-top: 1px solid var(--border); }
+    .row { display: flex; align-items: center; gap: var(--gap-md); }
+    .row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--gap-md); }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap-md); }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap-md); }
+    .grid-1-2 { display: grid; grid-template-columns: 1fr 1.4fr; gap: var(--gap-xl); align-items: center; }
+    @media (max-width: 920px) {
+      .grid-2, .grid-3, .grid-1-2 { grid-template-columns: 1fr; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      :root { --gutter: 20px; }
+    }
+
+    h1 { font-family: var(--font-display); font-size: var(--fs-h1); font-weight: 650; line-height: 1.06; letter-spacing: -0.03em; margin: 0; }
+    h2 { font-family: var(--font-display); font-size: var(--fs-h2); font-weight: 650; line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
+    h3 { font-family: var(--font-display); font-size: var(--fs-h3); font-weight: 600; line-height: 1.3; margin: 0; }
+    .lead { font-size: var(--fs-lead); color: var(--muted); max-width: 46ch; margin: 0; }
+    .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin: 0 0 var(--gap-md); }
+    .meta { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--muted); }
+    .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+    .sec-head { max-width: 40ch; margin-bottom: var(--gap-xl); }
+    .sec-head p:last-child { color: var(--muted); margin: 14px 0 0; }
+
+    /* nav */
+    .topnav { position: sticky; top: 0; z-index: 10; background: color-mix(in oklch, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+    .topnav-inner { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-md); padding-block: 12px; }
+    .topnav nav { display: flex; gap: var(--gap-lg); }
+    .topnav nav a { font-size: 14px; color: var(--muted); padding: 6px 0; transition: color .15s; }
+    .topnav nav a:hover { color: var(--fg); }
+    @media (max-width: 760px) { .topnav nav { display: none; } }
+    .pagefoot { padding-block: var(--gap-xl); color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); }
+    .pagefoot .row-between { flex-wrap: wrap; }
+
+    /* buttons */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 20px; border-radius: var(--radius); border: 1px solid transparent; font-size: 15px; font-weight: 500; transition: transform .05s, background .15s, border-color .15s, color .15s; }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--accent) 84%, black); border-color: color-mix(in oklch, var(--accent) 84%, black); }
+    .btn-secondary { background: var(--surface); color: var(--fg); border-color: var(--border); }
+    .btn-secondary:hover { border-color: var(--fg); background: var(--surface); }
+    .btn-ghost { background: transparent; color: var(--fg); padding-inline: 10px; }
+    .btn-ghost:hover { background: var(--fg-soft); }
+    .btn-arrow::after { content: '→'; transition: transform .15s; }
+    .btn-arrow:hover::after { transform: translateX(2px); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; }
+    /* ─── brand primitives ───────────────────────────────────────────── */
+    .mark { color: var(--accent); flex: none; }
+    .wordmark { font-family: var(--font-display); font-weight: 650; letter-spacing: -0.035em; line-height: 1; }
+    .wordmark-cn { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.06em; line-height: 1; }
+    .lockup { display: inline-flex; align-items: center; gap: .32em; color: var(--fg); }
+    .lockup .mark { width: 1.25em; height: 1.25em; }
+    .brand-link { font-size: 21px; display: inline-flex; border-radius: 8px; }
+
+    /* hero stage */
+    .hero { padding-block: clamp(64px, 9vw, 120px); }
+    .hero-split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap-xl); align-items: center; }
+    @media (max-width: 920px) { .hero-split { grid-template-columns: 1fr; } }
+    .hero .lead { margin: var(--gap-md) 0 var(--gap-lg); }
+    .hero-cta { display: flex; flex-wrap: wrap; gap: var(--gap-sm); }
+    .stage { position: relative; aspect-ratio: 1 / 1; border-radius: 28px; background: var(--ink); color: var(--bean); display: grid; place-items: center; overflow: hidden; }
+    .stage-mark { width: 58%; height: auto; }
+    .stage-top, .stage-bottom { position: absolute; left: 24px; right: 24px; display: flex; justify-content: space-between; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; color: var(--ink-muted); }
+    .stage-top { top: 22px; }
+    .stage-bottom { bottom: 20px; }
+    .rec-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--signal); margin-right: 8px; vertical-align: 1px; }
+    .stage:not(.is-rec) .rec-dot { background: var(--ink-muted); }
+    .stage-timer { font-size: 15px; color: var(--mist); letter-spacing: .04em; }
+    .stage-toggle { min-height: 44px; padding: 8px 16px; border-radius: 999px; border: 1px solid color-mix(in oklch, var(--mist) 26%, transparent); background: color-mix(in oklch, var(--mist) 6%, transparent); color: var(--mist); font-size: 13px; letter-spacing: 0; font-family: var(--font-body); }
+    .stage-toggle:hover { background: color-mix(in oklch, var(--mist) 16%, transparent); border-color: color-mix(in oklch, var(--mist) 44%, transparent); }
+    .stage-toggle:focus-visible { outline-color: var(--bean); }
+
+    /* wave states inside live masks */
+    .wave-run { animation: wave 1.6s linear infinite; }
+    .seam-flat { display: none; }
+    .stage:not(.is-rec) .wave-run { animation-play-state: paused; visibility: hidden; }
+    .stage:not(.is-rec) .seam-flat { display: inline; }
+    @keyframes wave { to { transform: translateX(-80px); } }
+    @media (prefers-reduced-motion: reduce) { .wave-run { animation: none; } }
+
+    /* construction */
+    .spec-list { margin: 0; padding: 0; list-style: none; }
+    .spec-list li { display: grid; grid-template-columns: 44px 1fr; gap: 16px; padding: 20px 0; border-top: 1px solid var(--border); }
+    .spec-list li:last-child { border-bottom: 1px solid var(--border); }
+    .spec-list .num { color: var(--muted); font-size: 13px; padding-top: 3px; }
+    .spec-list p { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+    .construct { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: clamp(16px, 3vw, 32px); }
+    .construct svg { width: 100%; height: auto; }
+    .c-grid { stroke: var(--border); }
+    .c-guide { stroke: var(--muted); fill: none; stroke-dasharray: 1.2 1.2; }
+    .c-label { font-family: var(--font-mono); font-size: 3.2px; fill: var(--muted); letter-spacing: .04em; }
+    /* lockups */
+    .lockup-card { position: relative; min-height: 240px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--surface); display: grid; place-items: center; padding: 56px 24px 48px; }
+    .lockup-card.on-ink { background: var(--ink); border-color: var(--ink); }
+    .lockup-card.on-ink .lockup { color: var(--mist); }
+    .lockup-card.on-ink .mark { color: var(--bean); }
+    .lockup-card .cap { position: absolute; left: 20px; bottom: 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+    .lockup-card.on-ink .cap { color: var(--ink-muted); }
+    .lockup-stack { display: inline-flex; flex-direction: column; align-items: center; gap: 14px; color: var(--fg); }
+    .lockup-stack .mark { width: 76px; height: 76px; }
+    .lockup-card.on-ink .lockup-stack { color: var(--mist); }
+
+    /* app icon */
+    .icon-tabs { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); margin-bottom: var(--gap-lg); flex-wrap: wrap; }
+    .icon-tab { min-height: 44px; padding: 8px 16px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 14px; transition: background .15s, color .15s; }
+    .icon-tab:hover { background: var(--fg-soft); color: var(--fg); }
+    .icon-tab[aria-selected="true"] { background: var(--fg); color: var(--surface); }
+    .icon-ramp { display: flex; align-items: flex-end; flex-wrap: wrap; gap: clamp(20px, 4vw, 48px); padding: clamp(24px, 4vw, 48px); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+    .icon-ramp figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .icon-ramp figcaption { font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+    .app-icon { --ic-bg: var(--bean); --ic-fg: var(--ink); display: block; flex: none; }
+    .app-icon .ic-bg { fill: var(--ic-bg); }
+    .app-icon .ic-mark { color: var(--ic-fg); }
+    .app-icon.v-ink   { --ic-bg: var(--ink);  --ic-fg: var(--bean); }
+    .app-icon.v-mist  { --ic-bg: var(--mist); --ic-fg: var(--accent); }
+    .app-icon.v-mist .ic-bg { stroke: var(--border); stroke-width: .6; }
+    .icon-shadow { filter: drop-shadow(0 8px 18px color-mix(in oklch, var(--ink) 16%, transparent)); }
+
+    /* home screen preview */
+    .phone { margin-top: var(--gap-lg); border-radius: var(--radius-lg); background: var(--ink); padding: clamp(24px, 4vw, 40px); display: grid; grid-template-columns: repeat(4, minmax(0, 76px)); justify-content: center; gap: 28px 24px; }
+    .phone figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .phone figcaption { font-size: 12px; color: var(--mist); }
+    .slot { width: 64px; height: 64px; border-radius: 15px; background: color-mix(in oklch, var(--mist) 10%, transparent); }
+    .slot + figcaption { color: var(--ink-muted); }
+
+    /* states */
+    .state-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+    .state-view { aspect-ratio: 4 / 3; background: var(--ink); color: var(--bean); display: grid; place-items: center; position: relative; }
+    .state-view svg { width: 42%; height: auto; }
+    .state-view .tagline { position: absolute; top: 16px; left: 18px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-muted); letter-spacing: .06em; }
+    .state-body { padding: 20px 22px 24px; }
+    .state-body p { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+
+    /* palette */
+    .swatch { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); }
+    .swatch-chip { height: 132px; }
+    .swatch-body { padding: 16px 18px 20px; }
+    .swatch-body h3 { font-size: 17px; }
+    .swatch-body .meta { display: block; margin-top: 4px; }
+    .swatch-body p { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+    .type-row { display: grid; grid-template-columns: 180px 1fr; gap: var(--gap-lg); padding: 28px 0; border-top: 1px solid var(--border); align-items: baseline; }
+    .type-row:last-child { border-bottom: 1px solid var(--border); }
+    @media (max-width: 760px) { .type-row { grid-template-columns: 1fr; gap: 10px; } }
+
+    /* usage rules */
+    .log-row { display: grid; grid-template-columns: 140px 1fr; gap: var(--gap-lg); padding: 22px 0; border-top: 1px solid var(--border); align-items: baseline; }
+    .log-row h3 { font-size: 18px; }
+    .log-row p { margin: 4px 0 0; color: var(--muted); font-size: 15px; max-width: 62ch; }
+    @media (max-width: 760px) { .log-row { grid-template-columns: 1fr; gap: 6px; } }
+    .dl-status { min-height: 1.6em; margin: 16px 0 0; font-size: 14px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <!-- 标志源：豆形椭圆 × 正弦声波切缝 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <mask id="rb-cut" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140">
+        <rect x="-20" y="-20" width="140" height="140" fill="white"/>
+        <path d="M-30 50 C-20 66 0 66 10 50 C20 34 40 34 50 50 C60 66 80 66 90 50 C100 34 120 34 130 50" fill="none" stroke="black" stroke-width="7" stroke-linecap="round"/>
+      </mask>
+      <mask id="rb-cut-sm" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140">
+        <rect x="-20" y="-20" width="140" height="140" fill="white"/>
+        <path d="M-30 50 C-20 66 0 66 10 50 C20 34 40 34 50 50 C60 66 80 66 90 50 C100 34 120 34 130 50" fill="none" stroke="black" stroke-width="10.5" stroke-linecap="round"/>
+      </mask>
+      <symbol id="rb-mark" viewBox="10 19 80 62">
+        <g transform="rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-cut)"/></g>
+      </symbol>
+      <symbol id="rb-mark-sm" viewBox="10 19 80 62">
+        <g transform="rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-cut-sm)"/></g>
+      </symbol>
+      <symbol id="rb-icon" viewBox="0 0 100 100">
+        <rect class="ic-bg" x="0" y="0" width="100" height="100" rx="22.4"/>
+        <use href="#rb-mark" class="ic-mark" x="17" y="25" width="66" height="51"/>
+      </symbol>
+      <symbol id="rb-icon-sm" viewBox="0 0 100 100">
+        <rect class="ic-bg" x="0" y="0" width="100" height="100" rx="22.4"/>
+        <use href="#rb-mark-sm" class="ic-mark" x="12" y="21" width="76" height="59"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="topnav" data-od-id="topnav">
+    <div class="container topnav-inner">
+      <a class="lockup brand-link" href="#hero" aria-label="录音豆 Recbean 首页">
+        <svg class="mark" viewBox="10 19 80 62" style="width:1.3em;height:1em" aria-hidden="true"><use href="#rb-mark"/></svg>
+        <span class="wordmark">Recbean</span>
+      </a>
+      <nav aria-label="页面导航">
+        <a href="#construction">标志构造</a>
+        <a href="#lockups">组合</a>
+        <a href="#app-icon">App Icon</a>
+        <a href="#palette">色彩</a>
+        <a href="#usage">规范</a>
+      </nav>
+      <a class="btn btn-secondary" href="#download" data-od-id="nav-download">获取文件</a>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="section hero" id="hero" data-od-id="hero">
+      <div class="container hero-split">
+        <div>
+          <p class="eyebrow">Recbean · 录音豆 · 品牌标志 v1.0</p>
+          <h1 data-od-id="hero-title">一颗会听的豆子。</h1>
+          <p class="lead">把一粒豆子切开，切缝就是一段声波。椭圆给出亲和的轮廓，正弦切缝交代“录音”这件事，大到启动页，小到状态栏，都能一眼认出。</p>
+          <div class="hero-cta">
+            <a class="btn btn-ghost btn-arrow" href="#construction" data-od-id="hero-see-construction">看标志如何构成</a>
+          </div>
+        </div>
+        <div class="stage is-rec" id="stage" data-od-id="hero-stage" role="group" aria-label="标志动态演示">
+          <div class="stage-top"><span><span class="rec-dot"></span><span id="stage-state">REC</span></span><span class="stage-timer num" id="stage-timer" aria-live="off">00:00</span></div>
+          <svg class="stage-mark" viewBox="10 19 80 62" role="img" aria-label="录音豆标志，声波切缝随录音流动">
+            <defs>
+              <mask id="rb-live" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140">
+                <rect x="-20" y="-20" width="140" height="140" fill="white"/>
+                <g class="wave-run"><path d="M-30 50 C-20 66 0 66 10 50 C20 34 40 34 50 50 C60 66 80 66 90 50 C100 34 120 34 130 50 C140 66 160 66 170 50 C180 34 200 34 210 50" fill="none" stroke="black" stroke-width="7" stroke-linecap="round"/></g>
+                <path class="seam-flat" d="M0 50 H100" stroke="black" stroke-width="7"/>
+              </mask>
+            </defs>
+            <g transform="rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-live)"/></g>
+          </svg>
+          <div class="stage-bottom"><span>声波切缝 · 实时</span><button class="stage-toggle" id="stage-toggle" type="button" aria-pressed="true" data-od-id="hero-stage-toggle">暂停</button></div>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="construction" data-od-id="construction">
+      <div class="container grid-1-2">
+        <div>
+          <p class="eyebrow">标志构造</p>
+          <h2 data-od-id="construction-title">两个几何元素，没有第三个。</h2>
+          <ol class="spec-list" style="margin-top: var(--gap-lg);">
+            <li data-od-id="spec-bean"><span class="num">01</span><div><h3>豆形</h3><p>长短轴 40 : 26 的椭圆，逆时针倾斜 24°。倾斜让静态图形带上“正在滚动”的势能。</p></div></li>
+            <li data-od-id="spec-wave"><span class="num">02</span><div><h3>声波切缝</h3><p>一个半周期的正弦曲线，线宽为画布的 7%。它既是豆子的子叶缝，也是一段被录下的声音。</p></div></li>
+            <li data-od-id="spec-space"><span class="num">03</span><div><h3>负形</h3><p>切缝把豆子分成上下两瓣，像一句话被分成两段。小尺寸下切缝加粗到 10.5%，保证不糊。</p></div></li>
+          </ol>
+        </div>
+        <div class="construct" data-od-id="construction-diagram">
+          <svg viewBox="0 0 100 100" role="img" aria-label="标志构造图：网格、椭圆轮廓、倾斜轴线与正弦切缝">
+            <defs>
+              <pattern id="c-grid" width="10" height="10" patternUnits="userSpaceOnUse"><path class="c-grid" d="M10 0H0V10" fill="none" stroke-width=".25"/></pattern>
+            </defs>
+            <rect width="100" height="100" fill="url(#c-grid)"/>
+            <g transform="rotate(-24 50 50)">
+              <ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-cut)" style="color: color-mix(in oklch, var(--accent) 22%, transparent)"/>
+              <ellipse class="c-guide" cx="50" cy="50" rx="40" ry="26" stroke-width=".35"/>
+              <line class="c-guide" x1="2" y1="50" x2="98" y2="50" stroke-width=".3"/>
+              <line class="c-guide" x1="50" y1="18" x2="50" y2="82" stroke-width=".3"/>
+              <path d="M10 50 C20 34 40 34 50 50 C60 66 80 66 90 50" fill="none" style="stroke: var(--accent)" stroke-width=".6"/>
+              <circle cx="10" cy="50" r="1.1" style="fill: var(--accent)"/>
+              <circle cx="50" cy="50" r="1.1" style="fill: var(--accent)"/>
+              <circle cx="90" cy="50" r="1.1" style="fill: var(--accent)"/>
+            </g>
+            <path class="c-guide" d="M74 50 A24 24 0 0 0 71.9 40.2" stroke-width=".35" style="stroke-dasharray: none"/>
+            <text class="c-label" x="76" y="46">24°</text>
+            <text class="c-label" x="4" y="7">GRID 10 · 画布 100</text>
+            <text class="c-label" x="4" y="96">椭圆 rx 40 · ry 26</text>
+            <text class="c-label" x="62" y="96">切缝线宽 7</text>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="lockups" data-od-id="lockups">
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">组合方式</p>
+          <h2>中英文各一套，横竖各一版。</h2>
+          <p>英文字标用紧缩字距的无衬线，与圆润的豆形形成软硬对比；中文“录音豆”放宽字距，避免三个方块字挤成一团。</p>
+        </div>
+        <div class="grid-2">
+          <div class="lockup-card" data-od-id="lockup-en-light">
+            <span class="lockup" style="font-size: 52px"><svg class="mark" viewBox="10 19 80 62" style="width:1.3em;height:1em" aria-hidden="true"><use href="#rb-mark"/></svg><span class="wordmark">Recbean</span></span>
+            <span class="cap">横版 · 英文 · 浅底</span>
+          </div>
+          <div class="lockup-card on-ink" data-od-id="lockup-cn-dark">
+            <span class="lockup" style="font-size: 52px"><svg class="mark" viewBox="10 19 80 62" style="width:1.3em;height:1em" aria-hidden="true"><use href="#rb-mark"/></svg><span class="wordmark-cn">录音豆</span></span>
+            <span class="cap">横版 · 中文 · 深底</span>
+          </div>
+          <div class="lockup-card on-ink" data-od-id="lockup-stack-dark">
+            <span class="lockup-stack"><svg class="mark" viewBox="10 19 80 62" aria-hidden="true" style="width:96px;height:74px"><use href="#rb-mark"/></svg><span class="wordmark" style="font-size: 34px">Recbean</span><span class="wordmark-cn" style="font-size: 15px; color: var(--ink-muted)">录音豆</span></span>
+            <span class="cap">竖版 · 双语 · 深底</span>
+          </div>
+          <div class="lockup-card" data-od-id="lockup-stack-light">
+            <span class="lockup-stack"><svg class="mark" viewBox="10 19 80 62" aria-hidden="true" style="width:96px;height:74px"><use href="#rb-mark"/></svg><span class="wordmark-cn" style="font-size: 30px">录音豆</span><span class="wordmark" style="font-size: 15px; letter-spacing: 0; color: var(--muted)">Recbean</span></span>
+            <span class="cap">竖版 · 双语 · 浅底</span>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="app-icon" data-od-id="app-icon">
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">App Icon</p>
+          <h2>满版豆绿，在主屏上最好找。</h2>
+          <p>默认版本用豆绿底、墨绿标志；墨绿版用于深色模式与 macOS Dock；雾白版留给印刷与浅色物料。24px 及以下自动换用加粗切缝。</p>
+        </div>
+        <div class="icon-tabs" role="tablist" aria-label="App Icon 配色版本" data-od-id="icon-variant-tabs">
+          <button class="icon-tab" role="tab" type="button" aria-selected="true" data-variant="" data-od-id="icon-tab-bean">豆绿 · 默认</button>
+          <button class="icon-tab" role="tab" type="button" aria-selected="false" tabindex="-1" data-variant="v-ink" data-od-id="icon-tab-ink">墨绿 · 深色模式</button>
+          <button class="icon-tab" role="tab" type="button" aria-selected="false" tabindex="-1" data-variant="v-mist" data-od-id="icon-tab-mist">雾白 · 印刷</button>
+        </div>
+        <div class="icon-ramp" id="icon-ramp" role="tabpanel" aria-label="App Icon 尺寸梯度" data-od-id="icon-ramp">
+          <figure><svg class="app-icon icon-shadow" width="160" height="160" viewBox="0 0 100 100" aria-label="录音豆 App Icon 160px" role="img"><use href="#rb-icon"/></svg><figcaption>160<br>商店展示</figcaption></figure>
+          <figure><svg class="app-icon icon-shadow" width="96" height="96" viewBox="0 0 100 100" aria-label="录音豆 App Icon 96px" role="img"><use href="#rb-icon"/></svg><figcaption>96<br>启动页</figcaption></figure>
+          <figure><svg class="app-icon" width="64" height="64" viewBox="0 0 100 100" aria-label="录音豆 App Icon 64px" role="img"><use href="#rb-icon"/></svg><figcaption>64<br>主屏</figcaption></figure>
+          <figure><svg class="app-icon" width="40" height="40" viewBox="0 0 100 100" aria-label="录音豆 App Icon 40px" role="img"><use href="#rb-icon"/></svg><figcaption>40<br>设置 / 分享</figcaption></figure>
+          <figure><svg class="app-icon" width="24" height="24" viewBox="0 0 100 100" aria-label="录音豆 App Icon 24px，加粗切缝" role="img"><use href="#rb-icon-sm"/></svg><figcaption>24<br>通知</figcaption></figure>
+          <figure><svg class="app-icon" width="16" height="16" viewBox="0 0 100 100" aria-label="录音豆 App Icon 16px，加粗切缝" role="img"><use href="#rb-icon-sm"/></svg><figcaption>16<br>Favicon</figcaption></figure>
+        </div>
+        <div class="phone" aria-label="主屏预览：录音豆图标与占位应用并列" data-od-id="home-screen-preview">
+          <figure><div class="slot"></div><figcaption>应用</figcaption></figure>
+          <figure><div class="slot"></div><figcaption>应用</figcaption></figure>
+          <figure><svg class="app-icon" id="home-icon" width="64" height="64" viewBox="0 0 100 100" aria-hidden="true"><use href="#rb-icon"/></svg><figcaption>录音豆</figcaption></figure>
+          <figure><div class="slot"></div><figcaption>应用</figcaption></figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="states" data-od-id="states">
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">动态状态</p>
+          <h2>切缝本身就是录音状态。</h2>
+          <p>在录音按钮、灵动岛和小组件里，标志直接充当状态指示，不需要额外的文字。</p>
+        </div>
+        <div class="grid-3">
+          <article class="state-card" data-od-id="state-idle">
+            <div class="state-view"><span class="tagline">IDLE</span><svg viewBox="10 19 80 62" aria-hidden="true"><use href="#rb-mark"/></svg></div>
+            <div class="state-body"><h3>待机</h3><p>静止的声波切缝，即标准标志。</p></div>
+          </article>
+          <article class="state-card" data-od-id="state-recording">
+            <div class="state-view"><span class="tagline"><span class="rec-dot"></span>REC</span>
+              <svg viewBox="10 19 80 62" aria-hidden="true">
+                <defs><mask id="rb-live-2" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140"><rect x="-20" y="-20" width="140" height="140" fill="white"/><g class="wave-run"><path d="M-30 50 C-20 66 0 66 10 50 C20 34 40 34 50 50 C60 66 80 66 90 50 C100 34 120 34 130 50 C140 66 160 66 170 50 C180 34 200 34 210 50" fill="none" stroke="black" stroke-width="7" stroke-linecap="round"/></g></mask></defs>
+                <g transform="rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-live-2)"/></g>
+              </svg>
+            </div>
+            <div class="state-body"><h3>录音中</h3><p>声波沿切缝持续向左流动，周期 1.6 秒。</p></div>
+          </article>
+          <article class="state-card" data-od-id="state-paused">
+            <div class="state-view"><span class="tagline">PAUSED</span>
+              <svg viewBox="10 19 80 62" aria-hidden="true">
+                <defs><mask id="rb-flat" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140"><rect x="-20" y="-20" width="140" height="140" fill="white"/><path d="M0 50 H100" stroke="black" stroke-width="7"/></mask></defs>
+                <g transform="rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="currentColor" mask="url(#rb-flat)"/></g>
+              </svg>
+            </div>
+            <div class="state-body"><h3>暂停</h3><p>切缝拉平成直线，代表此刻静音。</p></div>
+          </article>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="palette" data-od-id="palette">
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">色彩与字体</p>
+          <h2>一种绿，两种明度。</h2>
+          <p>豆绿负责被看见，深豆绿负责被读清。录音红只出现在 REC 状态点上，永远不进入标志本身。</p>
+        </div>
+        <div class="grid-4">
+          <div class="swatch" data-od-id="swatch-bean"><div class="swatch-chip" style="background: var(--bean)"></div><div class="swatch-body"><h3>豆绿 Bean</h3><span class="meta">oklch(78% 0.2 148)</span><p>App Icon 底色；深底上的标志。</p></div></div>
+          <div class="swatch" data-od-id="swatch-deep"><div class="swatch-chip" style="background: var(--accent)"></div><div class="swatch-body"><h3>深豆绿 Deep</h3><span class="meta">oklch(52% 0.15 152)</span><p>浅底上的标志、链接与主按钮。</p></div></div>
+          <div class="swatch" data-od-id="swatch-ink"><div class="swatch-chip" style="background: var(--ink)"></div><div class="swatch-body"><h3>墨绿 Ink</h3><span class="meta">oklch(22% 0.035 165)</span><p>深色背景、Icon 上的标志色。</p></div></div>
+          <div class="swatch" data-od-id="swatch-mist"><div class="swatch-chip" style="background: var(--mist); border-bottom: 1px solid var(--border)"></div><div class="swatch-body"><h3>雾白 Mist</h3><span class="meta">oklch(96.5% 0.012 150)</span><p>深底文字、浅色面板。</p></div></div>
+        </div>
+        <div style="margin-top: var(--gap-xl);">
+          <div class="type-row" data-od-id="type-en"><span class="meta">英文字标<br>SF Pro Display · 650 · −3.5%</span><span class="wordmark" style="font-size: clamp(40px, 6vw, 64px)">Recbean</span></div>
+          <div class="type-row" data-od-id="type-cn"><span class="meta">中文字标<br>苹方 / 鸿蒙黑体 · 600 · +6%</span><span class="wordmark-cn" style="font-size: clamp(36px, 5vw, 56px)">录音豆</span></div>
+          <div class="type-row" data-od-id="type-mono"><span class="meta">数字与时间码<br>等宽 · tabular-nums</span><span class="num" style="font-size: clamp(28px, 4vw, 40px); letter-spacing: -.02em">00:42:17</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="usage" data-od-id="usage">
+      <div class="container">
+        <div class="sec-head">
+          <p class="eyebrow">使用规范</p>
+          <h2>五条规则，守住辨识度。</h2>
+        </div>
+        <article class="log-row" data-od-id="rule-clearspace"><span class="meta">安全区</span><div><h3>四周至少留出标志宽度的 25%</h3><p>横版组合中，豆形与字标的间距固定为字高的 0.32 倍，不随场景调整。</p></div></article>
+        <article class="log-row" data-od-id="rule-minsize"><span class="meta">最小尺寸</span><div><h3>屏幕 16px，印刷 5mm</h3><p>24px 及以下使用加粗切缝版本（线宽 10.5%），避免切缝在低分辨率下闭合。</p></div></article>
+        <article class="log-row" data-od-id="rule-contrast"><span class="meta">明暗搭配</span><div><h3>浅底用深豆绿，深底用豆绿</h3><p>豆绿直接放在白底上对比度不足，不要这样使用；需要彩色底时，只用豆绿底配墨绿标志。</p></div></article>
+        <article class="log-row" data-od-id="rule-wordmark"><span class="meta">字标</span><div><h3>正式物料使用转曲后的字标</h3><p>本页字标为系统字体实时渲染，交付印刷或商店素材前应以选定字重转为轮廓，锁定字形与字距。</p></div></article>
+        <article class="log-row" data-od-id="rule-dont"><span class="meta">禁止</span><div><h3>不拉伸、不改角度、不改切缝</h3><p>不给标志加描边、渐变或投影；不把正弦切缝换成柱状声波或麦克风图形。</p></div></article>
+      </div>
+    </section>
+
+    <section class="section" id="download" data-od-id="download" style="text-align: center;">
+      <div class="container" style="max-width: 640px;">
+        <h2>带走源文件。</h2>
+        <p class="lead" style="margin: 16px auto 32px;">矢量 SVG，颜色已按本页色板写入。App Icon 为直角满版，圆角交给系统裁切。</p>
+        <div class="hero-cta" style="justify-content: center;">
+          <button class="btn btn-primary" type="button" data-dl="icon" data-od-id="download-icon">下载 App Icon SVG</button>
+          <button class="btn btn-ghost" type="button" data-dl="mark" data-od-id="download-mark">标志</button>
+          <button class="btn btn-ghost" type="button" data-dl="mark-sm" data-od-id="download-mark-sm">小尺寸标志</button>
+        </div>
+        <p class="dl-status" id="dl-status" role="status"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="pagefoot" data-od-id="footer">
+    <div class="container row-between">
+      <span class="lockup" style="font-size: 15px"><svg class="mark" viewBox="10 19 80 62" style="width:1.3em;height:1em" aria-hidden="true"><use href="#rb-mark"/></svg><span class="wordmark">Recbean</span><span class="wordmark-cn" style="margin-left:6px; font-size: 13px; color: var(--muted)">录音豆</span></span>
+      <span class="meta">品牌标志规范 v1.0 · 语音笔记与会议记录</span>
+    </div>
+  </footer>
+  <script>
+    (function () {
+      /* ── hero 录音演示：计时 + 暂停/继续 ── */
+      var stage = document.getElementById('stage');
+      var toggle = document.getElementById('stage-toggle');
+      var timer = document.getElementById('stage-timer');
+      var stateLabel = document.getElementById('stage-state');
+      var elapsed = 0, tick = null;
+      function render() {
+        var m = Math.floor(elapsed / 60), s = elapsed % 60;
+        timer.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+      }
+      function setRec(on) {
+        stage.classList.toggle('is-rec', on);
+        toggle.setAttribute('aria-pressed', String(on));
+        toggle.textContent = on ? '暂停' : '继续录音';
+        stateLabel.textContent = on ? 'REC' : 'PAUSED';
+        clearInterval(tick);
+        if (on) tick = setInterval(function () { elapsed++; render(); }, 1000);
+      }
+      toggle.addEventListener('click', function () { setRec(!stage.classList.contains('is-rec')); });
+      setRec(true);
+
+      /* ── App Icon 版本切换（tablist，支持方向键） ── */
+      var tabs = Array.prototype.slice.call(document.querySelectorAll('.icon-tab'));
+      var icons = document.querySelectorAll('#icon-ramp .app-icon, #home-icon');
+      function select(tab) {
+        tabs.forEach(function (t) {
+          var on = t === tab;
+          t.setAttribute('aria-selected', String(on));
+          t.tabIndex = on ? 0 : -1;
+        });
+        icons.forEach(function (ic) {
+          ic.classList.remove('v-ink', 'v-mist');
+          if (tab.dataset.variant) ic.classList.add(tab.dataset.variant);
+        });
+      }
+      tabs.forEach(function (t, i) {
+        t.addEventListener('click', function () { select(t); });
+        t.addEventListener('keydown', function (e) {
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          var next = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+          next.focus(); select(next); e.preventDefault();
+        });
+      });
+
+      /* ── SVG 下载：把 oklch 色板解析为 rgb，兼容设计软件 ── */
+      var probe = document.createElement('canvas').getContext('2d');
+      function rgb(varName) {
+        var v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        var el = document.createElement('span');
+        el.style.color = v; document.body.appendChild(el);
+        var c = getComputedStyle(el).color; el.remove();
+        probe.fillStyle = 'black'; probe.fillStyle = c;
+        probe.fillRect(0, 0, 1, 1);
+        var d = probe.getImageData(0, 0, 1, 1).data;
+        return 'rgb(' + d[0] + ',' + d[1] + ',' + d[2] + ')';
+      }
+      var WAVE = 'M-30 50 C-20 66 0 66 10 50 C20 34 40 34 50 50 C60 66 80 66 90 50 C100 34 120 34 130 50';
+      function markGroup(fill, sw, tf) {
+        return '<mask id="cut" maskUnits="userSpaceOnUse" x="-20" y="-20" width="140" height="140"><rect x="-20" y="-20" width="140" height="140" fill="white"/><path d="' + WAVE + '" fill="none" stroke="black" stroke-width="' + sw + '" stroke-linecap="round"/></mask>' +
+          '<g transform="' + (tf || '') + ' rotate(-24 50 50)"><ellipse cx="50" cy="50" rx="40" ry="26" fill="' + fill + '" mask="url(#cut)"/></g>';
+      }
+      function build(kind) {
+        var head = '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" ';
+        if (kind === 'icon') {
+          return head + 'width="1024" height="1024" viewBox="0 0 100 100"><rect width="100" height="100" fill="' + rgb('--bean') + '"/>' +
+            markGroup(rgb('--ink'), 7, 'translate(17 25) scale(.825) translate(-10 -19)') + '</svg>';
+        }
+        var sw = kind === 'mark-sm' ? 10.5 : 7;
+        return head + 'width="800" height="620" viewBox="10 19 80 62">' + markGroup(rgb('--accent'), sw) + '</svg>';
+      }
+      var status = document.getElementById('dl-status');
+      var names = { icon: 'recbean-app-icon.svg', mark: 'recbean-mark.svg', 'mark-sm': 'recbean-mark-small.svg' };
+      document.querySelectorAll('[data-dl]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var kind = btn.dataset.dl;
+          var url = URL.createObjectURL(new Blob([build(kind)], { type: 'image/svg+xml' }));
+          var a = document.createElement('a');
+          a.href = url; a.download = names[kind];
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+          status.textContent = '已生成 ' + names[kind];
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
