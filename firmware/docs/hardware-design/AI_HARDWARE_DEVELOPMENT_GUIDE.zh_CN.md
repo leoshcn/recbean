@@ -113,8 +113,8 @@ app_main
 公开 BSP API 位于 `components/bsp/include/`：
 
 - `bsp_i2c.h`：共享总线初始化、句柄和扫描。
-- `bsp_display.h`：LCD、背光以及可选 LVGL 接入。
-- `bsp_button.h`：三键事件与校准电压读取。
+- `bsp_display.h`：LCD、背光、可逆熄屏（`bsp_display_sleep()`）以及可选 LVGL 接入。
+- `bsp_button.h`：三键事件、校准电压读取，以及睡眠用的可逆暂停/恢复与终端深睡准备。
 - `bsp_audio.h`：codec 初始化、格式、阻塞式 PCM 收发和音量。
 - `bsp_battery.h`：SOC 与电压。
 - `bsp_pins.h`：硬件常量，不承载业务逻辑。
@@ -146,6 +146,8 @@ ESP32-C3 无 PSRAM。当前 LVGL 显示缓冲为 `240 × 20` 像素的单 DMA �
 LVGL 最终输出的 RGB565 刷新区域会统一套用 30 px 圆角遮罩，因此正常刷新和页面切换期间，圆角之外的四角区域都会保持纯黑。遮罩直接作用于局部绘制缓冲，不使用根 screen 的 `clip_corner`；全屏圆角裁剪需要 ARGB 中间图层，在本项目无 PSRAM、LVGL 内存池仅 24 KB 的条件下可能耗尽内存。该行为统一放在显示接入层，不应在各页面重复绘制四角装饰。
 
 终端 deep sleep 前，应先阻止新页面任务，并持有 LVGL 锁等待当前 flush 完成。`bsp_display_prepare_deep_sleep()` 随后发送关闭显示和 Sleep In，将背光 PWM 停在低电平，设置 CS 为高电平，SCLK/MOSI/DC/背光为低电平，开启单引脚 hold 及 ESP32-C3 全局 deep-sleep hold。唤醒后 `bsp_display_init()` 会在 SPI 或 LEDC 接管前解除全局与单引脚 hold。该终端接口不是可恢复的息屏操作，调用后必须立即进入 deep sleep 或重启。
+
+可恢复的熄屏（例如应用在 light sleep 期间关屏）使用 `bsp_display_sleep(bool)`：`true` 发送 DISPOFF 与 SLPIN，面板 GRAM 内容保留；`false` 发送 SLPOUT，补足 ST7789 要求的 120 ms 稳定时间后再 DISPON。该接口不停止背光 PWM、不设置安全电平、不 hold 引脚，SPI 与 LEDC 保持可用，重复调用幂等。调用方负责顺序：进入前先把背光调到 0，并持 LVGL 锁暂停刷屏（例如 `lvgl_port_stop()`）；退出后先恢复 LVGL 并强制重绘，最后再打开背光，避免看到旧帧或残影。
 
 LVGL 非线程安全：
 
@@ -180,6 +182,11 @@ LVGL 非线程安全：
 - 回调来自 button 组件使用的共享 `esp_timer` 任务，只能入队或执行同等级的有界操作，不能阻塞、录音、播放或访问 UI。
 - 事件包括 PRESS、CLICK、DOUBLE、LONG、RELEASE（松开，对应组件的 `BUTTON_PRESS_UP`，每次按下后都会上报，供按住说话类交互使用；短按时 CLICK 在 RELEASE 之后约 180 ms 才到）。应用菜单主要消费 CLICK；页面中的 OK LONG 被全局拦截用于返回。
 - 按键判定时序由 BSP 显式下发（`BSP_BTN_SHORT_PRESS_MS` = 180 ms、`BSP_BTN_LONG_PRESS_MS` = 500 ms，见 `bsp_pins.h`），不依赖组件 Kconfig 默认的 180 / 1500 ms：三个小按键上按住 1.5 s 才触发长按偏迟钝。组件对 `BUTTON_LONG_PRESS_TIME_MS` 的 Kconfig 下限同样是 500 ms，更短的长按只能在代码里下发。
+- 睡眠：ADC 占用 GPIO0 时该脚的数字电平恒读 0（即使有外部上拉），低电平唤醒会立刻成立，所以两种睡眠都必须先释放 ADC。三键分压 0/300/595 mV 都低于数字低电平阈值，任意键都能唤醒。`BSP_BTN_GPIO`（`bsp_pins.h`，GPIO0）是这个引脚的 GPIO 编号。
+  - `bsp_button_suspend(cb, user)`（**可逆**，light sleep 用）：先停 button 组件的轮询定时器，再释放校准与 ADC unit，把 GPIO0 切为数字输入并开内部上拉，回读电平。若有键按住则恢复原状并返回 `ESP_ERR_INVALID_STATE`，调用方稍后重试；否则武装 `gpio_wakeup_enable(低电平)`、`esp_sleep_enable_gpio_wakeup()` 和 GPIO 中断。按键按下时 `cb` 在中断上下文被调用一次（中断随即关闭），只能做置标志、`xQueueSendFromISR` 之类的 ISR 安全操作。暂停期间不上报按键事件，`bsp_button_read_mv()` 返回 `-1`。
+  - `bsp_button_resume()`（**可逆**）：解除 GPIO 唤醒与中断，关闭内部上拉，先重建 ADC unit/校准再恢复轮询。若此时按键仍按住，组件恢复后照常上报 PRESS（例如按住说话）。ADC 重建失败时保持暂停并返回错误，可重试。
+  - `bsp_button_prepare_deep_sleep(&level)`（**终端**，deep sleep 用）：停止轮询并释放 ADC（已暂停时只解除浅睡唤醒），GPIO0 切数字输入上拉，回读电平写回 `level`。松开时武装 `esp_deep_sleep_enable_gpio_wakeup(1ULL << GPIO0, 低电平)` 并返回 `ESP_OK`；按住时不武装并返回 `ESP_ERR_INVALID_STATE`，调用方必须等松开后重试，否则会“睡下即醒”。之后应立即进入 deep sleep；唤醒即重启，由 `bsp_button_init()` 重新初始化。C3 的 deep-sleep GPIO 唤醒只支持 GPIO0~5，改按键脚时需注意。
+  - 以上接口只能在同一个任务中串行调用，不能在按键回调里调用。
 
 重标阈值时，在 Button 页逐个长按按键记录稳定电压，采集多块板、不同电量和合理温度范围的数据，再把相邻分布之间留裕量设置为边界。不要只用理论分压值。
 
@@ -244,7 +251,7 @@ Audio demo 的工作任务在 PCM 分块之间检查取消状态，并在页面�
 
 ## 9. CW2017 电池计
 
-CW2017 在共享 I2C 地址 0x63。初始化读取 VERSION 确认在线，并检查 profile 更新标志以及全部 80 字节内容。需要更新时，驱动让电量计进入睡眠态，写入并读回校验优特利 520mAh 电芯的厂家 profile，置更新标志，再按 `0x30` 到 `0x00` 的规定时序重启，最长等待 5 秒取得有效 SOC。更换电芯时必须取得匹配的厂家 profile，并重新完成充放电验证。
+CW2017 在共享 I2C 地址 0x63。初始化读取 VERSION 确认在线，并检查 profile 更新标志以及全部 80 字节内容。需要更新时，驱动让电量计进入睡眠态，写入并读回校验优特利 520mAh 电芯的厂家 profile，置更新标志，再按 `0x30` 到 `0x00` 的规定时序重启，然后等待 SOC 就绪：连续 3 次（100 ms 间隔）读到相同且 ≤ 100 的值才算就绪；如果这个值是 0，还要电压低于 3.6 V 才接受，否则视为芯片尚未算完（写 profile 重启、deep sleep 唤醒后 `cw_enter_active()` 重启时，首个读数常为 0）。最长等待 5 秒；超时只记警告并返回 `ESP_OK`、保留设备，早期读数可能仍是 0，上层应把“电压 > 3.6 V 而 SOC = 0”视为无效读数而不是显示 0%。更换电芯时必须取得匹配的厂家 profile，并重新完成充放电验证。
 
 - SOC：读 0x04–0x05，仅返回高字节整数百分比；大于 100 视为未就绪并返回 `-1`。
 - 电压：读 0x02–0x03 的 14 bit 值，换算为 `raw × 312.5 µV`，API 返回 mV。

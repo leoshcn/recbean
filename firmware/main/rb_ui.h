@@ -22,6 +22,8 @@ typedef struct {
     uint32_t free_heap;       // 设备信息页显示
     uint32_t largest_block;
     const char *fw_version;
+    uint32_t uptime_s;        // 开机以来秒数（诊断：判断是否发生过重启）
+    int reset_reason;         // 本次启动的 esp_reset_reason_t
 } rb_ui_info_t;
 
 // 创建全部页面对象（只创建一次，之后只切换显示与更新文本）。

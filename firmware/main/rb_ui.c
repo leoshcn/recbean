@@ -209,12 +209,12 @@ static void build_idle(lv_obj_t *scr)
     lv_obj_t *mic = label(btn, RB_FONT_NUM40, 0xFFFFFF, LV_SYMBOL_AUDIO);
     lv_obj_center(mic);
 
-    // 三行操作提示（两种录音模式 + 设置），行距 22 px。
+    // 三行操作提示（两种录音模式 + 休眠/设置），行距 22 px。
     lv_obj_t *meet = label(s_pg_idle, rb_font_cn(), C_TEXT, "按 确定 会议录音");
     lv_obj_align(meet, LV_ALIGN_TOP_MID, 0, 146);
     lv_obj_t *note = label(s_pg_idle, rb_font_cn(), C_TEXT, "按住 上 记笔记");
     lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 168);
-    lv_obj_t *sub = label(s_pg_idle, rb_font_cn(), C_MUTED, "长按 确定 设置");
+    lv_obj_t *sub = label(s_pg_idle, rb_font_cn(), C_MUTED, "下 休眠 · 长按 确定 设置");
     lv_obj_align(sub, LV_ALIGN_TOP_MID, 0, 190);
 
     s_idle_status = wrap_label(s_pg_idle, C_MUTED, "", 210);
@@ -431,6 +431,8 @@ static const char *notice_text(rb_notice_t n)
     case RB_NOTICE_ASR_ERROR: return "识别出错，录音仍在保存";
     case RB_NOTICE_SERVER_ERROR: return "服务器出错";
     case RB_NOTICE_PTT_SHORT: return "按住 上 键说话，松开结束";
+    case RB_NOTICE_BATT_LOW: return "电量低，请尽快充电";
+    case RB_NOTICE_BATT_CUT: return "电量过低，即将休眠";
     case RB_NOTICE_NONE:
     default: return "";
     }
@@ -491,7 +493,7 @@ static void render_bar(const rb_app_t *app, const rb_ui_info_t *info, uint32_t n
         char b[24];
         snprintf(b, sizeof(b), "%d%% %s", soc, sym);
         set_text(s_bar_batt, b);
-        set_color(s_bar_batt, soc <= 10 ? C_RED : C_TEXT);
+        set_color(s_bar_batt, soc <= RB_BATT_WARN_SOC ? C_RED : C_TEXT);
         show(s_bar_batt, true);
     }
 }
@@ -696,9 +698,11 @@ static void render_settings(const rb_app_t *app, const rb_ui_info_t *info)
             snprintf(batt, sizeof(batt), "不可用");
         }
         snprintf(body, sizeof(body),
-                 "设备 ID：%s\n固件：%s\nWi-Fi：%s\nIP：%s\n电量：%s\n可用内存：%lu KB（最大块 %lu KB）",
+                 "设备 ID：%s\n固件：%s\nWi-Fi：%s\nIP：%s\n断线：%u 次（原因 %u）\n"
+                 "运行：%lu 秒（复位原因 %d）\n电量：%s\n可用内存：%lu KB（最大块 %lu KB）",
                  info->net.device_id, info->fw_version, info->net.ssid[0] ? info->net.ssid : "未配置",
-                 info->net.ip[0] ? info->net.ip : "未连接", batt,
+                 info->net.ip[0] ? info->net.ip : "未连接", (unsigned)info->net.disc_count,
+                 (unsigned)info->net.disc_reason, (unsigned long)info->uptime_s, info->reset_reason, batt,
                  (unsigned long)(info->free_heap / 1024u), (unsigned long)(info->largest_block / 1024u));
     }
     set_text(s_set_detail_body, body);

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/recbean-firmware-lessons.md", "reason": "RecBean ESP32-C3 固件经验：内存预算、真机测试流程"}
+{"file": "firmware/docs/reference/shinku-chen/deep-sleep-peripheral-power-off.zh_CN.md", "reason": "深睡外设关闭顺序契约"}
+{"file": "firmware/docs/reference/shinku-chen/landscape-rotation-and-deep-sleep-key-wake.zh_CN.md", "reason": "GPIO0 ADC 按键深睡唤醒陷阱"}
+{"file": "firmware/docs/development/ai-guide.zh_CN.md", "reason": "固件提交前自检规则"}

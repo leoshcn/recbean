@@ -13,12 +13,13 @@ idf_component_register(
          "rb_fonts.c"
          "rb_net.c"
          "rb_portal.c"
+         "rb_power.c"
          "rb_session.c"
          "rb_store.c"
          "rb_ui.c"
     INCLUDE_DIRS "."
     REQUIRES bsp esp_event esp_http_client esp_http_server esp_netif esp_timer esp_wifi
-             esp_hw_support lwip nvs_flash
+             esp_hw_support esp_pm lwip nvs_flash
 )
 
 # 断网缓存帧数（每帧 200 ms / 1608 B）。设计目标 50 帧 ≈ 80 KB ≈ 10 s；静态 RAM 预算

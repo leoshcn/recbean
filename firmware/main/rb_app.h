@@ -21,6 +21,17 @@
 //   结束   任意键或 10 s 后回待机
 //   设置   上/下 选择，确定 进入；“重新配网”需再按一次确定确认；长按确定返回
 //   配网/配对  长按确定 = 设置（可查看设备信息或重新配网）
+//   待机页单击下 = 立即熄屏并进入浅睡（手动休眠，10-20-power-battery-optimization R10）
+// 两级省电（10-20-power-battery-optimization）：
+//   ACTIVE ──熄屏（120 s 无操作 / 待机页单击下）──▶ LIGHT ──熄屏后 RB_DEEP_IDLE_MS 无操作──▶ DEEP
+//   LIGHT：屏幕 Sleep In、LVGL 暂停、CPU 自动 light sleep、Wi-Fi 低功耗、暂停服务器探测；
+//          按键脚 GPIO 唤醒 → RB_EV_WAKE_KEY → 点亮回 ACTIVE。唤醒后 RB_WAKE_GUARD_MS 内到达的
+//          第一个按键事件属于唤醒那次按键，按“熄屏首次按键只点亮”处理（待机页按住上仍直接记笔记）。
+//   DEEP：终端状态（唤醒 = 重启），动作位 RB_ACT_POWER_DEEP + deep_reason 交给 app 任务执行；
+//          之后状态机忽略一切事件，直到 RB_EV_DEEP_ABORT（入睡前发现按键按住）。
+//   配网/配对页 RB_PROV_DEEP_MS 无操作直接深睡；连接/录音/确认/保存中不熄屏也不睡。
+//   低电（RB_EV_BATTERY）：SOC ≤ RB_BATT_WARN_SOC 提示一次；连续 RB_BATT_CONFIRM 次
+//   SOC ≤ RB_BATT_CUT_SOC 或电压 < RB_BATT_CUT_MV → 录音先结束并保存，然后提示“电量过低”并深睡。
 // 时间比较一律用 (int32_t)(a - b) 判断先后，可容忍 uint32 毫秒回绕（约 49 天）。
 #pragma once
 
@@ -76,7 +87,25 @@ typedef enum {
     RB_EV_TRANSCRIPT,       // c = 当前保留的定稿句数（供翻看夹取）
     RB_EV_PTT_DOWN,         // 上键按下（按住说话开始）
     RB_EV_PTT_UP,           // 上键松开（按住说话结束）
+    RB_EV_BATTERY,          // 电量读数：a = SOC 0..100（-1 = 无效/不可用），c = 电压 mV（-1 = 不可用）
+    RB_EV_WAKE_KEY,         // 浅睡中按键脚触发 GPIO 唤醒（按键组件已暂停，只知道“有键按下”）
+    RB_EV_DEEP_ABORT,       // 执行深睡前发现按键按住：放弃本次深睡，回到浅睡/活动态
 } rb_ev_type_t;
+
+// 电源状态。
+typedef enum {
+    RB_POWER_ACTIVE = 0,    // 正常运行
+    RB_POWER_LIGHT,         // 浅睡（可逆）：熄屏 + 自动 light sleep
+    RB_POWER_DEEP,          // 已决定深睡（终端），等待 app 任务执行
+} rb_power_t;
+
+// 深睡原因（RB_ACT_POWER_DEEP 时 deep_reason 有效；也记入 RTC 供唤醒后判断）。
+typedef enum {
+    RB_SLEEP_NONE = 0,
+    RB_SLEEP_IDLE,          // 熄屏后长时间无操作
+    RB_SLEEP_PROV,          // 配网/配对页长时间无操作
+    RB_SLEEP_LOW_BATT,      // 电量过低保护
+} rb_sleep_reason_t;
 
 // 录音模式。
 typedef enum {
@@ -99,6 +128,9 @@ typedef struct {
 #define RB_ACT_REPROVISION      (1u << 4)  // 清除 Wi-Fi/服务器/令牌并重新打开配网热点
 #define RB_ACT_CLEAR_TRANSCRIPT (1u << 5)  // 清空转写显示缓冲
 #define RB_ACT_BACKLIGHT        (1u << 6)  // backlight 字段变化，需要下发
+#define RB_ACT_POWER_LIGHT_ENTER (1u << 7) // 进入浅睡（背光已为 0）
+#define RB_ACT_POWER_LIGHT_EXIT  (1u << 8) // 退出浅睡（先唤醒屏幕与 LVGL，再下发背光）
+#define RB_ACT_POWER_DEEP        (1u << 9) // 进入深睡（deep_reason）：先执行其他动作并重绘，最后执行
 
 typedef enum {
     RB_NOTICE_NONE = 0,
@@ -110,6 +142,8 @@ typedef enum {
     RB_NOTICE_ASR_ERROR,        // “识别出错，录音仍在保存”
     RB_NOTICE_SERVER_ERROR,     // “服务器出错”
     RB_NOTICE_PTT_SHORT,        // “按住 上 键说话”（笔记按得太短，已丢弃）
+    RB_NOTICE_BATT_LOW,         // “电量低，请尽快充电”（SOC ≤ RB_BATT_WARN_SOC，只提示一次）
+    RB_NOTICE_BATT_CUT,         // “电量过低，即将休眠”（低电保护深睡前）
 } rb_notice_t;
 
 typedef enum {
@@ -141,8 +175,19 @@ typedef enum {
 #define RB_DIM_IDLE_MS       30000  // 待机类页面调暗
 #define RB_OFF_IDLE_MS       120000 // 待机类页面熄屏
 #define RB_DIM_BUSY_MS       60000  // 录音/配网页调暗（不熄屏）
+#define RB_DEEP_IDLE_MS      900000 // 熄屏（进入浅睡）后再无操作进入深睡，15 min
+#define RB_PROV_DEEP_MS      600000 // 配网/配对页无操作直接深睡，10 min
+#define RB_WAKE_GUARD_MS     1000   // 浅睡唤醒后，此时间内的第一个按键事件只负责点亮
 #define RB_BACKLIGHT_FULL    100
 #define RB_BACKLIGHT_DIM     20
+
+// 电量阈值。
+#define RB_BATT_WARN_SOC     5      // ≤ 此值顶栏标红并提示一次
+#define RB_BATT_WARN_RESET   8      // 回升到 ≥ 此值（充电）后允许再次提示
+#define RB_BATT_CUT_SOC      2      // ≤ 此值触发低电保护深睡
+#define RB_BATT_CUT_MV       3300   // 电压低于此值也触发（暂定，实测后定）
+#define RB_BATT_SANE_MV      3600   // 电压高于此值时 SOC=0 视为电量计未就绪的无效读数
+#define RB_BATT_CONFIRM      2      // 低电保护需连续满足的读数次数（避免瞬时压降误触发）
 
 typedef struct {
     rb_view_t view;
@@ -178,6 +223,20 @@ typedef struct {
     // 背光
     uint32_t last_activity_ms;  // 最近一次按键或视图切换
     uint8_t backlight;          // 当前背光 0..100
+    bool manual_off;            // 待机页单击下手动熄屏（任何按键/视图切换清除）
+    // 电源
+    rb_power_t power;
+    uint32_t light_since_ms;    // 进入浅睡的时刻（深睡倒计时起点）
+    bool wake_guard;            // 刚被 GPIO 唤醒：下一个按键事件按“熄屏首次按键”处理
+    uint32_t wake_guard_deadline;
+    rb_sleep_reason_t deep_reason;
+    // 电量（RB_EV_BATTERY）
+    int8_t batt_soc;            // -1 = 未知/无效
+    int16_t batt_mv;            // -1 = 未知
+    uint8_t batt_cut_hits;      // 连续满足低电保护条件的读数次数
+    bool batt_warned;           // 本轮低电已提示过
+    bool batt_warn_pending;     // 低电提示待屏幕点亮后再显示（浅睡中不为提示点亮屏幕）
+    bool batt_cut;              // 低电保护已触发：会话收尾后深睡
 } rb_app_t;
 
 // 初始化。phase 来自 NVS 中的配网状态；now 为当前毫秒。
@@ -194,3 +253,7 @@ bool rb_app_in_session(const rb_app_t *app);
 
 // 笔记录音中、仍在等上键松开：app 任务据此在 TICK 时读按键电平，补发丢失的 PTT_UP。
 bool rb_app_ptt_waiting_release(const rb_app_t *app);
+
+// 电量计读数合理性过滤：电压正常（> RB_BATT_SANE_MV）而 SOC=0 视为无效，返回 -1；
+// 其余原样返回（-1 仍为 -1）。
+int rb_app_filter_soc(int soc, int mv);

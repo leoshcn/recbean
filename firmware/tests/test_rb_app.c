@@ -1,5 +1,7 @@
 // tests/test_rb_app.c —— 应用状态机主机测试：按键流程、二次确认、翻看自动返回、
-// 失败降级（PRD R6）、配网/配对阶段切换、设置页、背光调暗/熄屏。
+// 失败降级（PRD R6）、配网/配对阶段切换、设置页、背光调暗/熄屏；
+// 两级省电与低电保护（10-20-power-battery-optimization：浅睡/深睡计时、唤醒按键语义、
+// 待机页下键手动休眠、会话中不睡、配网页深睡、低电两次确认与先保存后深睡）。
 #include <assert.h>
 #include <string.h>
 
@@ -585,8 +587,364 @@ static void test_meeting_after_note(void)
     assert(app.view == RB_VIEW_CONNECTING && !(act & RB_ACT_SESSION_START));
 }
 
+// ---------------------------------------------------------------------------
+// 两级省电与电量（10-20-power-battery-optimization）
+// ---------------------------------------------------------------------------
+
+static void to_light(void)
+{
+    uint32_t act = tick_to(now_ms + RB_OFF_IDLE_MS + 250);
+    assert(app.backlight == 0 && app.power == RB_POWER_LIGHT);
+    assert(act & RB_ACT_POWER_LIGHT_ENTER);
+}
+
+// R1/R3：熄屏即浅睡；浅睡 15 min 后深睡；深睡后忽略事件，推迟（按键按住）后回到浅睡重新计时。
+static void test_power_light_deep(void)
+{
+    now_ms = 100000;
+    ready_idle();
+    assert(app.power == RB_POWER_ACTIVE);
+    uint32_t act = tick_to(now_ms + RB_OFF_IDLE_MS - 250);
+    assert(app.power == RB_POWER_ACTIVE && !(act & RB_ACT_POWER_LIGHT_ENTER));
+    to_light();
+    uint32_t since = app.light_since_ms;
+    act = tick_to(now_ms + 1000);
+    assert(!(act & (RB_ACT_POWER_LIGHT_ENTER | RB_ACT_POWER_LIGHT_EXIT)));
+    act = tick_to(since + RB_DEEP_IDLE_MS - 250);
+    assert(app.power == RB_POWER_LIGHT && !(act & RB_ACT_POWER_DEEP));
+    act = tick_to(since + RB_DEEP_IDLE_MS);
+    assert(app.power == RB_POWER_DEEP && (act & RB_ACT_POWER_DEEP));
+    assert(app.deep_reason == RB_SLEEP_IDLE && !(act & RB_ACT_POWER_LIGHT_EXIT));
+    // 已决定深睡：其他事件一律忽略。
+    assert(key(RB_EV_KEY_OK) == 0 && ev(RB_EV_TICK, 0, 0, 0) == 0 && ev(RB_EV_WAKE_KEY, 0, 0, 0) == 0);
+    assert(app.power == RB_POWER_DEEP && app.view == RB_VIEW_IDLE);
+    // 入睡前发现按键按住：放弃，回到浅睡并重新计时。
+    act = ev(RB_EV_DEEP_ABORT, 0, 0, 0);
+    assert(app.power == RB_POWER_LIGHT && app.light_since_ms == now_ms && app.deep_reason == RB_SLEEP_NONE);
+    since = now_ms;
+    act = tick_to(since + RB_DEEP_IDLE_MS - 250);
+    assert(app.power == RB_POWER_LIGHT);
+    act = tick_to(since + RB_DEEP_IDLE_MS);
+    assert(app.power == RB_POWER_DEEP && (act & RB_ACT_POWER_DEEP));
+    // 设置页同样熄屏进浅睡。
+    ready_idle();
+    key(RB_EV_KEY_OK_LONG);
+    assert(app.view == RB_VIEW_SETTINGS);
+    to_light();
+}
+
+// R2：浅睡中 GPIO 唤醒 → 点亮；唤醒那次按键只点亮；按住上直接记笔记；超时后按键正常生效。
+static void test_power_wake_key(void)
+{
+    now_ms = 200000;
+    ready_idle();
+    to_light();
+    uint32_t act = ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    assert(app.power == RB_POWER_ACTIVE && app.backlight == RB_BACKLIGHT_FULL);
+    assert((act & RB_ACT_POWER_LIGHT_EXIT) && (act & RB_ACT_BACKLIGHT) && (act & RB_ACT_RENDER));
+    assert(ev(RB_EV_WAKE_KEY, 0, 0, 0) == 0);           // 重复/迟到的唤醒忽略
+    now_ms += 200;
+    act = key(RB_EV_KEY_OK);                             // 唤醒那次按键的单击：只点亮
+    assert(app.view == RB_VIEW_IDLE && !(act & RB_ACT_SESSION_START));
+    now_ms += 500;
+    act = key(RB_EV_KEY_OK);                             // 再按确定：会议录音
+    assert(app.view == RB_VIEW_CONNECTING && (act & RB_ACT_SESSION_START));
+    key(RB_EV_KEY_OK_LONG);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 唤醒后按住上：直接开始笔记录音。
+    to_light();
+    ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    now_ms += 50;
+    act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_RECORDING && app.mode == RB_MODE_NOTE && (act & RB_ACT_SESSION_START));
+    now_ms += 1000;
+    key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 0);
+    tick_to(now_ms + RB_NOTE_DONE_MS + 250);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 设置页唤醒：上键按下只点亮，随后的单击不移动选择。
+    key(RB_EV_KEY_OK_LONG);
+    to_light();
+    uint8_t sel = app.settings_sel;
+    ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    act = key(RB_EV_PTT_DOWN);
+    assert(app.view == RB_VIEW_SETTINGS && !(act & RB_ACT_SESSION_START));
+    key(RB_EV_PTT_UP);
+    key(RB_EV_KEY_UP);
+    assert(app.settings_sel == sel);
+    key(RB_EV_KEY_OK_LONG);
+    assert(app.view == RB_VIEW_IDLE);
+
+    // 唤醒按键没有产生事件（恢复前已松开）：保护窗口过后按键正常生效。
+    to_light();
+    ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    now_ms += RB_WAKE_GUARD_MS;
+    act = key(RB_EV_KEY_OK);
+    assert(app.view == RB_VIEW_CONNECTING && (act & RB_ACT_SESSION_START));
+
+    // 按键组件未能暂停（入睡时键按住）时，浅睡中的按键事件同样退出浅睡、只点亮。
+    key(RB_EV_KEY_OK_LONG);
+    to_light();
+    act = key(RB_EV_KEY_OK);
+    assert(app.power == RB_POWER_ACTIVE && (act & RB_ACT_POWER_LIGHT_EXIT));
+    assert(app.view == RB_VIEW_IDLE && !(act & RB_ACT_SESSION_START));
+}
+
+// R10：待机页单击下 = 立即熄屏进浅睡，并从此刻计深睡；其他页面下键行为不变。
+static void test_power_manual_sleep(void)
+{
+    now_ms = 300000;
+    ready_idle();
+    uint32_t act = key(RB_EV_KEY_DOWN);
+    assert(app.backlight == 0 && app.power == RB_POWER_LIGHT && app.manual_off);
+    assert((act & RB_ACT_BACKLIGHT) && (act & RB_ACT_POWER_LIGHT_ENTER));
+    assert(app.light_since_ms == now_ms && app.view == RB_VIEW_IDLE);
+    act = tick_to(now_ms + 5000);                        // TICK 不会把屏点亮
+    assert(app.backlight == 0 && !(act & RB_ACT_POWER_LIGHT_EXIT));
+    // 熄屏时再按下（按键组件未暂停的情况）：只亮屏，不反复切换。
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.backlight == RB_BACKLIGHT_FULL && app.power == RB_POWER_ACTIVE && !app.manual_off);
+    assert(act & RB_ACT_POWER_LIGHT_EXIT);
+    // 调暗时单击下同样进入浅睡。
+    tick_to(now_ms + RB_DIM_IDLE_MS + 250);
+    assert(app.backlight == RB_BACKLIGHT_DIM);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.backlight == 0 && app.power == RB_POWER_LIGHT && (act & RB_ACT_POWER_LIGHT_ENTER));
+    // GPIO 唤醒后，唤醒那次下键的单击只点亮。
+    ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.backlight == RB_BACKLIGHT_FULL && app.power == RB_POWER_ACTIVE && !app.manual_off);
+    assert(!(act & RB_ACT_POWER_LIGHT_ENTER) && !(act & RB_ACT_SESSION_START));
+    // 再按下：再次休眠；15 min 后深睡（从按键时刻起算，而不是 120 s 自动熄屏）。
+    now_ms += 2000;
+    key(RB_EV_KEY_DOWN);
+    uint32_t since = now_ms;
+    assert(app.power == RB_POWER_LIGHT && app.light_since_ms == since);
+    act = tick_to(since + RB_DEEP_IDLE_MS - 250);
+    assert(app.power == RB_POWER_LIGHT);
+    act = tick_to(since + RB_DEEP_IDLE_MS);
+    assert(app.power == RB_POWER_DEEP && app.deep_reason == RB_SLEEP_IDLE);
+
+    // 录音页：下键仍是往新翻看，不熄屏。
+    ready_idle();
+    start_recording();
+    ev(RB_EV_TRANSCRIPT, 0, 0, 5);
+    key(RB_EV_KEY_UP);
+    key(RB_EV_KEY_UP);
+    assert(app.browse_offset == 2);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.browse_offset == 1 && app.backlight == RB_BACKLIGHT_FULL && app.power == RB_POWER_ACTIVE);
+    assert(!(act & RB_ACT_POWER_LIGHT_ENTER) && !app.manual_off);
+    // 确认结束页：下键继续录音。
+    key(RB_EV_KEY_OK);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.view == RB_VIEW_RECORDING && app.power == RB_POWER_ACTIVE && !(act & RB_ACT_POWER_LIGHT_ENTER));
+    // 设置页：下键移动选择。
+    ready_idle();
+    key(RB_EV_KEY_OK_LONG);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.view == RB_VIEW_SETTINGS && app.settings_sel == RB_SET_SERVER);
+    assert(app.backlight == RB_BACKLIGHT_FULL && !(act & RB_ACT_POWER_LIGHT_ENTER));
+    // 结束页：下键回待机（不休眠）。
+    ready_idle();
+    start_recording();
+    key(RB_EV_KEY_OK);
+    key(RB_EV_KEY_OK);
+    ev(RB_EV_SESS_SAVED, 0, 1000, 1);
+    assert(app.view == RB_VIEW_DONE);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.view == RB_VIEW_IDLE && app.backlight == RB_BACKLIGHT_FULL && !(act & RB_ACT_POWER_LIGHT_ENTER));
+    // 配网页：下键无作用，也不休眠。
+    rb_app_init(&app, RB_NET_PROV_AP, now_ms);
+    act = key(RB_EV_KEY_DOWN);
+    assert(app.view == RB_VIEW_PROVISIONING && app.backlight == RB_BACKLIGHT_FULL);
+    assert(!(act & RB_ACT_POWER_LIGHT_ENTER));
+}
+
+// R4：连接、录音、确认结束、保存中不熄屏、不进任何一级睡眠（会议录音 > 20 min）。
+static void test_power_session_pinned(void)
+{
+    now_ms = 400000;
+    ready_idle();
+    start_recording();
+    uint32_t act = tick_to(now_ms + 25u * 60u * 1000u);
+    assert(app.view == RB_VIEW_RECORDING && app.power == RB_POWER_ACTIVE && app.backlight == RB_BACKLIGHT_DIM);
+    assert(!(act & (RB_ACT_POWER_LIGHT_ENTER | RB_ACT_POWER_DEEP)));
+    key(RB_EV_KEY_OK);
+    act = tick_to(now_ms + RB_CONFIRM_MS - 250);
+    assert(app.view == RB_VIEW_CONFIRM_STOP && app.power == RB_POWER_ACTIVE);
+    key(RB_EV_KEY_OK);
+    act = tick_to(now_ms + RB_SAVE_GUARD_MS - 1000);
+    assert(app.view == RB_VIEW_SAVING && app.power == RB_POWER_ACTIVE && app.backlight == RB_BACKLIGHT_FULL);
+    assert(!(act & (RB_ACT_POWER_LIGHT_ENTER | RB_ACT_POWER_DEEP)));
+    // 连接中直到兜底超时都不睡。
+    ready_idle();
+    key(RB_EV_KEY_OK);
+    act = tick_to(now_ms + RB_CONNECT_GUARD_MS - 250);
+    assert(app.view == RB_VIEW_CONNECTING && !(act & (RB_ACT_POWER_LIGHT_ENTER | RB_ACT_POWER_DEEP)));
+    // 笔记按住很久也不睡。
+    ready_idle();
+    ptt_start();
+    ev(RB_EV_SESS_STARTED, 0, 0, 0);
+    act = tick_to(now_ms + RB_DEEP_IDLE_MS + RB_OFF_IDLE_MS);
+    assert(app.view == RB_VIEW_RECORDING && app.power == RB_POWER_ACTIVE);
+    assert(!(act & (RB_ACT_POWER_LIGHT_ENTER | RB_ACT_POWER_DEEP)));
+}
+
+// R5：配网/配对页 10 min 无操作直接深睡；按键与配网进展重新计时；加入 Wi-Fi 中不睡。
+static void test_power_provisioning_deep(void)
+{
+    now_ms = 500000;
+    rb_app_init(&app, RB_NET_PROV_AP, now_ms);
+    uint32_t start = now_ms;
+    uint32_t act = tick_to(start + RB_PROV_DEEP_MS - 250);
+    assert(app.power == RB_POWER_ACTIVE && app.backlight == RB_BACKLIGHT_DIM && !(act & RB_ACT_POWER_DEEP));
+    act = tick_to(start + RB_PROV_DEEP_MS);
+    assert(app.power == RB_POWER_DEEP && (act & RB_ACT_POWER_DEEP) && app.deep_reason == RB_SLEEP_PROV);
+
+    rb_app_init(&app, RB_NET_PROV_AP, now_ms);
+    start = now_ms;
+    tick_to(start + RB_PROV_DEEP_MS / 2);
+    key(RB_EV_KEY_OK);                                   // 配网页单击无作用，但算操作
+    start = now_ms;
+    act = tick_to(start + RB_PROV_DEEP_MS - 250);
+    assert(app.power == RB_POWER_ACTIVE);
+    ev(RB_EV_NET_PHASE, RB_NET_PROV_JOINING, 0, 0);      // 手机提交了表单
+    act = tick_to(now_ms + RB_PROV_DEEP_MS + 5000);
+    assert(app.power == RB_POWER_ACTIVE && !(act & RB_ACT_POWER_DEEP));   // 加入中不睡
+    ev(RB_EV_NET_PHASE, RB_NET_PROV_AP, 0, 0);           // 加入失败回到热点：重新计时
+    start = now_ms;
+    act = tick_to(start + RB_PROV_DEEP_MS - 250);
+    assert(app.power == RB_POWER_ACTIVE);
+    act = tick_to(start + RB_PROV_DEEP_MS);
+    assert(app.power == RB_POWER_DEEP && app.deep_reason == RB_SLEEP_PROV);
+
+    rb_app_init(&app, RB_NET_PAIRING, now_ms);
+    start = now_ms;
+    act = tick_to(start + RB_PROV_DEEP_MS);
+    assert(app.view == RB_VIEW_PAIRING && app.power == RB_POWER_DEEP && app.deep_reason == RB_SLEEP_PROV);
+}
+
+static uint32_t batt(int32_t soc, int32_t mv) { return ev(RB_EV_BATTERY, soc, 0, mv); }
+
+// R7/R8：低电提示一次；保护需连续两次满足；会话中先保存再深睡；读数过滤。
+static void test_power_battery(void)
+{
+    assert(rb_app_filter_soc(0, 3700) == -1);
+    assert(rb_app_filter_soc(0, RB_BATT_SANE_MV) == 0);
+    assert(rb_app_filter_soc(0, 3400) == 0);
+    assert(rb_app_filter_soc(0, -1) == 0);
+    assert(rb_app_filter_soc(57, 3900) == 57);
+    assert(rb_app_filter_soc(-1, 3900) == -1);
+
+    now_ms = 600000;
+    ready_idle();
+    uint32_t act = batt(80, 3950);
+    assert(app.notice == RB_NOTICE_NONE && app.batt_soc == 80 && app.batt_mv == 3950);
+    act = batt(5, 3650);
+    assert(app.notice == RB_NOTICE_BATT_LOW && (act & RB_ACT_RENDER));
+    tick_to(now_ms + RB_NOTICE_MS + 250);
+    assert(app.notice == RB_NOTICE_NONE);
+    batt(4, 3640);
+    assert(app.notice == RB_NOTICE_NONE);                 // 只提示一次
+    batt(RB_BATT_WARN_RESET, 3700);                       // 充电回升
+    batt(5, 3650);
+    assert(app.notice == RB_NOTICE_BATT_LOW);
+    // 单次低电不触发；中间恢复则重新计数。
+    act = batt(2, 3500);
+    assert(!(act & RB_ACT_POWER_DEEP) && app.power == RB_POWER_ACTIVE);
+    batt(3, 3500);
+    act = batt(2, 3500);
+    assert(!(act & RB_ACT_POWER_DEEP));
+    act = batt(1, 3480);
+    assert((act & RB_ACT_POWER_DEEP) && app.power == RB_POWER_DEEP && app.deep_reason == RB_SLEEP_LOW_BATT);
+    assert(app.notice == RB_NOTICE_BATT_CUT && app.backlight == RB_BACKLIGHT_FULL && (act & RB_ACT_RENDER));
+    // 推迟后需重新连续两次。
+    ev(RB_EV_DEEP_ABORT, 0, 0, 0);
+    assert(app.power == RB_POWER_ACTIVE && !app.batt_cut);
+    act = batt(1, 3480);
+    assert(!(act & RB_ACT_POWER_DEEP));
+    act = batt(1, 3480);
+    assert(act & RB_ACT_POWER_DEEP);
+
+    // 电压低于阈值也触发（SOC 无效时）。
+    ready_idle();
+    batt(-1, RB_BATT_CUT_MV - 50);
+    act = batt(-1, RB_BATT_CUT_MV - 60);
+    assert((act & RB_ACT_POWER_DEEP) && app.deep_reason == RB_SLEEP_LOW_BATT);
+    // 无效读数（-1/-1）不算低电。
+    ready_idle();
+    batt(-1, -1);
+    act = batt(-1, -1);
+    assert(!(act & RB_ACT_POWER_DEEP) && app.batt_cut_hits == 0);
+
+    // 会议录音中：先结束并保存，saved 后深睡。
+    ready_idle();
+    start_recording();
+    tick_to(now_ms + 5000);
+    batt(2, 3400);
+    act = batt(2, 3400);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP) && !(act & RB_ACT_POWER_DEEP));
+    assert(app.notice == RB_NOTICE_BATT_CUT && app.power == RB_POWER_ACTIVE);
+    act = tick_to(now_ms + 3000);
+    assert(app.view == RB_VIEW_SAVING && !(act & RB_ACT_POWER_DEEP));
+    ev(RB_EV_SESS_SAVED, 0, 5000, 2);
+    assert(app.view == RB_VIEW_DONE && app.done_kind == RB_DONE_SAVED);
+    act = tick_to(now_ms + 250);
+    assert((act & RB_ACT_POWER_DEEP) && app.deep_reason == RB_SLEEP_LOW_BATT && app.notice == RB_NOTICE_BATT_CUT);
+    // 保存超时同样深睡。
+    ready_idle();
+    start_recording();
+    key(RB_EV_KEY_OK);                                    // 确认结束页中触发
+    batt(1, 3300);
+    act = batt(1, 3300);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP));
+    act = tick_to(now_ms + RB_SAVE_GUARD_MS + 250);
+    assert((act & RB_ACT_POWER_DEEP) && app.view == RB_VIEW_DONE);
+    // 笔记录音中：结束并保存（按住上键的松开不再起作用）。
+    ready_idle();
+    ptt_start();
+    now_ms += 1000;
+    batt(2, 3400);
+    act = batt(2, 3400);
+    assert(app.view == RB_VIEW_SAVING && (act & RB_ACT_SESSION_STOP) && !app.ptt_held);
+    key(RB_EV_PTT_UP);
+    assert(app.view == RB_VIEW_SAVING);
+    // 连接中：取消，立即深睡。
+    ready_idle();
+    key(RB_EV_KEY_OK);
+    batt(2, 3400);
+    act = batt(2, 3400);
+    assert((act & RB_ACT_SESSION_CANCEL) && (act & RB_ACT_POWER_DEEP) && app.view == RB_VIEW_IDLE);
+    // 浅睡中低电：先唤醒屏幕显示提示再深睡。
+    ready_idle();
+    to_light();
+    batt(2, 3400);
+    act = batt(2, 3400);
+    assert((act & RB_ACT_POWER_DEEP) && (act & RB_ACT_POWER_LIGHT_EXIT) && (act & RB_ACT_BACKLIGHT));
+    assert(app.backlight == RB_BACKLIGHT_FULL && app.notice == RB_NOTICE_BATT_CUT);
+    // 浅睡中的低电提示不点亮屏幕，唤醒后再显示。
+    ready_idle();
+    to_light();
+    act = batt(5, 3650);
+    assert(app.notice == RB_NOTICE_NONE && app.backlight == 0 && app.power == RB_POWER_LIGHT);
+    assert(!(act & RB_ACT_POWER_LIGHT_EXIT));
+    ev(RB_EV_WAKE_KEY, 0, 0, 0);
+    tick_to(now_ms + 250);
+    assert(app.notice == RB_NOTICE_BATT_LOW);
+}
+
 int main(void)
 {
+    test_power_light_deep();
+    test_power_wake_key();
+    test_power_manual_sleep();
+    test_power_session_pinned();
+    test_power_provisioning_deep();
+    test_power_battery();
     test_note_happy_path();
     test_note_done_dismiss();
     test_note_short_press();

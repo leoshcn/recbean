@@ -202,6 +202,13 @@ esp_err_t bsp_display_init(void) {
 
     e = backlight_init();
     if (e != ESP_OK) goto fail;
+    // CONFIG_PM_SLP_DISABLE_GPIO 会在每次自动 light sleep 时把所有 GPIO 断开成悬空：
+    // CS/SCLK/MOSI 浮动会让 ST7789 收到杂讯命令（唤醒时闪白），背光脚也可能被拉亮。
+    // 这几只脚在 light sleep 中保持当前驱动状态（CS 高、背光 PWM 停在 0）。
+    for (size_t i = 0; i < sizeof(s_deep_sleep_pins) /
+                           sizeof(s_deep_sleep_pins[0]); i++) {
+        if ((int)s_deep_sleep_pins[i] >= 0) (void)gpio_sleep_sel_dis(s_deep_sleep_pins[i]);
+    }
     s_ready = true;
     ESP_LOGI(TAG, "显示就绪 %dx%d", BSP_LCD_W, BSP_LCD_H);
     return ESP_OK;
@@ -238,6 +245,32 @@ void bsp_display_backlight(uint8_t percent) {
     uint32_t duty = (max_duty * percent) / 100u;
     ledc_set_duty(BSP_BL_LEDC_MODE, BSP_BL_LEDC_CHANNEL, duty);
     ledc_update_duty(BSP_BL_LEDC_MODE, BSP_BL_LEDC_CHANNEL);
+}
+
+// ST7789：SLPOUT 之后 120 ms 内不能再发 SLPIN，且需等待 120 ms 才能稳定显示。
+// esp_lcd 的 disp_sleep 已在命令后等待 100 ms，这里补足剩余部分。
+#define ST7789_SLPOUT_SETTLE_MS 20
+
+static bool s_panel_sleeping;   // bsp_display_sleep() 的可逆熄屏状态
+
+esp_err_t bsp_display_sleep(bool sleep) {
+    if (!s_ready || !s_panel) return ESP_ERR_INVALID_STATE;
+    if (sleep == s_panel_sleeping) return ESP_OK;
+    esp_err_t e;
+    if (sleep) {
+        e = esp_lcd_panel_disp_on_off(s_panel, false);                 // 0x28 DISPOFF
+        if (e == ESP_OK) e = esp_lcd_panel_disp_sleep(s_panel, true);  // 0x10 SLPIN
+    } else {
+        e = esp_lcd_panel_disp_sleep(s_panel, false);                  // 0x11 SLPOUT
+        if (e == ESP_OK) vTaskDelay(pdMS_TO_TICKS(ST7789_SLPOUT_SETTLE_MS));
+        if (e == ESP_OK) e = esp_lcd_panel_disp_on_off(s_panel, true); // 0x29 DISPON
+    }
+    if (e != ESP_OK) {
+        ESP_LOGE(TAG, "ST7789 %s 失败: %s", sleep ? "Sleep In" : "Sleep Out", esp_err_to_name(e));
+        return e;
+    }
+    s_panel_sleeping = sleep;
+    return ESP_OK;
 }
 
 esp_err_t bsp_display_prepare_deep_sleep(void) {

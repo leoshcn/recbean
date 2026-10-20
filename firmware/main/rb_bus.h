@@ -30,5 +30,9 @@ typedef struct {
 // 投递一个状态机事件。可在任意任务调用（不能在 ISR 中调用）。
 bool rb_bus_event(rb_ev_type_t type, int32_t a, int64_t b, int32_t c, uint32_t timeout_ms);
 
+// 在中断中投递一个无参数事件（目前只有浅睡按键唤醒 RB_EV_WAKE_KEY）。队列满时丢弃并返回
+// false。同一时刻只能有一个中断源调用（内部用静态暂存项，避免占用中断栈）。
+bool rb_bus_event_from_isr(rb_ev_type_t type);
+
 // 投递一条转写文本（websocket 事件任务调用）。text 已清洗、≤ 256 字节。
 bool rb_bus_text(bool final, int32_t idx, int32_t speaker, uint32_t start_ms, const char *text);

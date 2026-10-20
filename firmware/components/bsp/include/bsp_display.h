@@ -24,7 +24,13 @@ esp_lcd_panel_io_handle_t bsp_display_io(void);
 // 背光亮度 0..100(%)。LEDC PWM,0=全灭。
 void bsp_display_backlight(uint8_t percent);
 
-// deep sleep 专用：关闭显示、让 ST7789 进入 Sleep In，停止背光 PWM，
+// 【可逆】熄屏省电（light sleep 用）：sleep=true 发 DISPOFF + SLPIN，面板 GRAM 内容保留；
+// sleep=false 发 SLPOUT，等满 120 ms 后 DISPON。不停背光 PWM、不 hold 引脚，SPI 与 LEDC
+// 保持可用。调用方负责：进入前先把背光调到 0 并暂停 LVGL 刷屏（持 bsp_lvgl_lock()），
+// 退出后先重绘再开背光，避免看到残影。未初始化时返回 ESP_ERR_INVALID_STATE；重复调用幂等。
+esp_err_t bsp_display_sleep(bool sleep);
+
+// 【终端】deep sleep 专用：关闭显示、让 ST7789 进入 Sleep In，停止背光 PWM，
 // 将 CS/SCLK/MOSI/DC/背光设为安全电平并在 deep sleep 中保持。调用时必须
 // 已阻止 LVGL 刷屏，调用后必须立即进入 deep sleep 或重启。
 esp_err_t bsp_display_prepare_deep_sleep(void);

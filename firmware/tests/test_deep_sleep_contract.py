@@ -53,6 +53,16 @@ class DeepSleepContractTest(unittest.TestCase):
         cls.battery = read("components/bsp/src/bsp_battery.c")
         cls.display = read("components/bsp/src/bsp_display.c")
         cls.i2c = read("components/bsp/src/bsp_i2c.c")
+        cls.button = read("components/bsp/src/bsp_button.c")
+        cls.power = read("main/rb_power.c")
+        cls.sdkconfig = read("sdkconfig.defaults")
+
+    def assert_in_order(self, body: str, needles: list[str]) -> None:
+        last = -1
+        for needle in needles:
+            index = body.find(needle, last + 1)
+            self.assertGreater(index, last, f"{needle!r} missing or out of order")
+            last = index
 
     def test_es8311_force_sleep_sequence_is_complete_and_ordered(self) -> None:
         expected = [
@@ -136,6 +146,68 @@ class DeepSleepContractTest(unittest.TestCase):
         init = function_body(self.display, "bsp_display_init")
         self.assertLess(init.index("display_release_deep_sleep_holds()"),
                         init.index("spi_bus_initialize"))
+
+    # ---- 应用层（RecBean main/rb_power.c，10-20-power-battery-optimization）----
+
+    def test_app_deep_sleep_follows_bsp_order(self) -> None:
+        body = function_body(self.power, "rb_power_enter_deep")
+        self.assert_in_order(body, [
+            "key_pressed_now()",                 # 还没关任何外设时按键按着 → 推迟
+            "rb_net_stop()",                     # 长期存活的 Wi-Fi 必须先停
+            "bsp_lvgl_lock(",                    # 阻止 LVGL 刷屏，且不再释放
+            "bsp_battery_sleep()",
+            "bsp_audio_sleep()",
+            "bsp_audio_prepare_deep_sleep()",
+            "bsp_i2c_prepare_deep_sleep()",
+            "bsp_display_prepare_deep_sleep()",
+            "bsp_button_prepare_deep_sleep(",    # 释放 ADC、数字上拉、武装 GPIO 唤醒
+            "esp_deep_sleep_try_to_start()",
+            "esp_restart()",                     # 入口意外返回时重启，不尝试恢复
+        ])
+        self.assertNotIn("bsp_lvgl_unlock", body)
+
+    def test_app_deep_sleep_waits_for_key_release(self) -> None:
+        body = function_body(self.power, "rb_power_enter_deep")
+        loop = body[body.index("bsp_button_prepare_deep_sleep("):body.index("esp_deep_sleep_try_to_start()")]
+        self.assertIn("vTaskDelay", loop)
+        self.assertIn("DEEP_KEY_RETRIES", loop)
+
+    def test_light_sleep_never_uses_terminal_interfaces(self) -> None:
+        for name in ("rb_power_light_enter", "rb_power_light_exit", "rb_power_poll", "lvgl_pause", "screen_wake"):
+            body = function_body(self.power, name)
+            self.assertNotIn("prepare_deep_sleep", body, name)
+            self.assertNotIn("gpio_hold", body, name)
+            self.assertNotIn("rb_net_stop", body, name)
+        self.assertIn("bsp_display_sleep(true)", function_body(self.power, "rb_power_light_enter"))
+        self.assertIn("bsp_button_suspend(", function_body(self.power, "try_suspend_buttons"))
+        self.assertIn("screen_wake()", function_body(self.power, "rb_power_light_exit"))
+        self.assertIn("bsp_display_sleep(false)", function_body(self.power, "screen_wake"))
+        # lvgl_port_stop() 后 lv_timer_handler() 每次立即返回 1，必须挂起 LVGL 任务才能真正睡下。
+        self.assert_in_order(function_body(self.power, "lvgl_pause"), ["lvgl_port_stop()", "vTaskSuspend("])
+        self.assert_in_order(function_body(self.power, "screen_wake"), ["vTaskResume(", "lvgl_port_resume()"])
+        self.assertIn("bsp_button_resume()", function_body(self.power, "try_resume_buttons"))
+
+    def test_key_pin_released_from_adc_before_wake_is_armed(self) -> None:
+        deep = function_body(self.button, "bsp_button_prepare_deep_sleep")
+        self.assert_in_order(deep, [
+            "poll_stop()",
+            "key_pin_digital()",
+            "gpio_get_level(BSP_BTN_GPIO)",
+            "if (lv == 0) return ESP_ERR_INVALID_STATE",
+            "esp_deep_sleep_enable_gpio_wakeup(1ULL << BSP_BTN_GPIO, ESP_GPIO_WAKEUP_GPIO_LOW)",
+        ])
+        stop = function_body(self.button, "poll_stop")
+        self.assert_in_order(stop, ["iot_button_stop()", "adc_release()"])
+        suspend = function_body(self.button, "bsp_button_suspend")
+        self.assert_in_order(suspend, [
+            "poll_stop()", "key_pin_digital()", "gpio_get_level(BSP_BTN_GPIO) == 0", "light_wake_arm()",
+        ])
+        resume = function_body(self.button, "bsp_button_resume")
+        self.assert_in_order(resume, ["light_wake_disarm()", "adc_create()", "iot_button_resume()"])
+
+    def test_power_management_is_enabled(self) -> None:
+        self.assertRegex(self.sdkconfig, r"(?m)^CONFIG_PM_ENABLE=y$")
+        self.assertRegex(self.sdkconfig, r"(?m)^CONFIG_FREERTOS_USE_TICKLESS_IDLE=y$")
 
 
 if __name__ == "__main__":

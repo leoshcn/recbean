@@ -112,12 +112,37 @@ static int cw_update_profile(void) {
     return cw_enter_active();
 }
 
-// 首次计算期间 SOC 可能暂时大于 100；最多等待 5 秒再判定初始化失败。
+// 首次计算期间 SOC 可能暂时大于 100，也可能先读到 0（写 profile + 重启后尤其常见，
+// 正是“开机显示 0%”的来源）。就绪判定：连续 CW_SOC_STABLE_READS 次（100 ms 间隔）
+// 读到相同且 ≤100 的值；若这个值是 0，还要电压低于 CW_SOC_ZERO_MAX_MV 才接受，
+// 否则视为芯片尚未算完继续等。最多等待 5 秒。
+#define CW_SOC_STABLE_READS 3
+#define CW_SOC_ZERO_MAX_MV  3600   // 高于此电压时 SOC=0 不可信（与 rb_app.h RB_BATT_SANE_MV 一致）
+
+static int cw_read_mv(void) {
+    uint8_t b[2] = { 0 };
+    if (cw_read(CW_REG_VCELL_H, b, 2) != 0) return -1;
+    uint32_t raw = ((uint32_t)b[0] << 8 | b[1]) & 0x3FFF;   // 14bit
+    return (int)((raw * 3125) / 10000);                     // raw * 312.5uV → mV
+}
+
 static int cw_wait_soc_ready(void) {
+    int last = -1;
+    int same = 0;
     for (int retry = 0; retry < 50; retry++) {
         uint8_t soc = 0;
         vTaskDelay(pdMS_TO_TICKS(100));
-        if (cw_read(CW_REG_SOC_H, &soc, 1) == 0 && soc <= 100) return 0;
+        if (cw_read(CW_REG_SOC_H, &soc, 1) != 0 || soc > 100) {
+            same = 0;
+            continue;
+        }
+        same = soc == last ? same + 1 : 1;
+        last = soc;
+        if (same < CW_SOC_STABLE_READS) continue;
+        if (soc > 0) return 0;
+        int mv = cw_read_mv();
+        if (mv > 0 && mv < CW_SOC_ZERO_MAX_MV) return 0;   // 电压也证明确实没电
+        same = 0;
     }
     return -1;
 }
@@ -173,10 +198,10 @@ esp_err_t bsp_battery_init(void) {
         ESP_LOGI(TAG, "优特利 520mAh profile 已匹配");
     }
 
+    // 超时不算失败：芯片在线、profile 已就绪，只是首个 SOC 还不稳定。保留设备，
+    // 由应用层按电压做合理性过滤（SOC=0 且电压正常时不显示），之后的读数会恢复正常。
     if (cw_wait_soc_ready() != 0) {
-        ESP_LOGE(TAG, "等待首次 SOC 计算超时");
-        e = ESP_ERR_TIMEOUT;
-        goto fail;
+        ESP_LOGW(TAG, "5 秒内未读到稳定的 SOC，先以未就绪状态继续");
     }
 
     return ESP_OK;
@@ -221,8 +246,5 @@ int bsp_battery_soc(void) {
 }
 
 int bsp_battery_mv(void) {
-    uint8_t b[2] = { 0 };
-    if (cw_read(CW_REG_VCELL_H, b, 2) != 0) return -1;
-    uint32_t raw = ((uint32_t)b[0] << 8 | b[1]) & 0x3FFF;   // 14bit
-    return (int)((raw * 3125) / 10000);                     // raw * 312.5uV → mV
+    return cw_read_mv();
 }

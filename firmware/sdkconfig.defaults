@@ -40,6 +40,18 @@ CONFIG_LV_USE_CLIB_MALLOC=y
 # --- 系统 ---
 CONFIG_FREERTOS_HZ=1000
 
+# --- 电源管理（10-20-power-battery-optimization）---
+# 熄屏后进入浅睡：main/rb_power.c 调 esp_pm_configure() 允许降频到 40 MHz 并自动 light sleep，
+# Wi-Fi 保持连接（MAX_MODEM）；亮屏时恢复为 160 MHz 不降频、不 light sleep，活动态时序不变。
+# 需要 PM 支持 + tickless idle（空闲时停掉 1 kHz 系统节拍才能真正睡下去）。
+# 启动时不自动开启 DFS（PM_DFS_INIT_AUTO 默认 n），由应用按电源状态配置。
+# 注意：light sleep 期间 USB-Serial-JTAG 串口日志会断开，真机验证以电流表为准。
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# 插着电脑 USB 时（同时在充电）不进自动 light sleep：USB-Serial-JTAG 在 light sleep 中及唤醒后都无法工作，
+# 不加这项则第一次浅睡后串口日志与崩溃信息全部丢失。只看主机 SOF，纯充电器不算连接。
+CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION=y
+
 # --- Bluetooth ---
 # RecBean 只用 Wi-Fi（SoftAP 配网 + STA 上传），关闭蓝牙控制器，把内部 RAM 留给
 # Wi-Fi、WebSocket、LVGL 与 80 KB 断网缓存。

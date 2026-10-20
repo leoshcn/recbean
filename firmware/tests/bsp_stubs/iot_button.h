@@ -20,4 +20,6 @@ typedef struct { int unused; } button_event_args_t;
 typedef void (*button_cb_t)(void *, void *);
 esp_err_t iot_button_create(const button_config_t *, const button_driver_t *, button_handle_t *);
 esp_err_t iot_button_delete(button_handle_t);
+esp_err_t iot_button_stop(void);
+esp_err_t iot_button_resume(void);
 esp_err_t iot_button_register_cb(button_handle_t, button_event_t, button_event_args_t *, button_cb_t, void *);

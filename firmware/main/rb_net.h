@@ -4,7 +4,7 @@
 //   PROV_AP     无 Wi-Fi 配置 → 打开热点 RecBean-Setup + 配置页
 //   PROV_JOINING 收到表单 → 用新凭据连 Wi-Fi（≤ 20 s）；成功才写 NVS
 //   PAIRING     Wi-Fi 已连、无令牌 → POST /device/pair 取码，每 3 s 轮询 GET /device/pair/{id}
-//   READY       有令牌 → 每 15 s TCP 探测服务器端口（录音中暂停）
+//   READY       有令牌 → 每 15 s TCP 探测服务器端口（录音中、浅睡中暂停）
 // 所有阻塞操作（扫描、HTTP、探测、NVS）都在本任务中执行；对外接口只置标志并唤醒任务，
 // 可从 app 任务或会话任务调用。
 #pragma once
@@ -30,6 +30,8 @@ typedef struct {
     int8_t server_ok;                     // -1 未知 / 0 不可达 / 1 可达（配对与探测共用）
     rb_portal_state_t portal;             // 配网页状态（PROV_* 阶段有效）
     bool phone_joined;                    // 有手机连上了热点
+    uint16_t disc_count;                  // 开机以来 STA 断线次数（诊断用）
+    uint8_t disc_reason;                  // 最近一次断线原因码（wifi_err_reason_t），0 = 无
 } rb_net_status_t;
 
 // 读取 NVS、确定初始阶段并启动网络任务。必须在 rb_store_init() 之后调用。
@@ -52,6 +54,15 @@ void rb_net_request_repair(void);
 
 // 录音会话进行中时暂停服务器探测，避免与上传争用。
 void rb_net_set_session_active(bool active);
+
+// 浅睡（熄屏）低功耗：on = Wi-Fi 切 WIFI_PS_MAX_MODEM（按 listen_interval 醒来收信标）、
+// 停止服务器探测、网络任务轮询放慢到 1 s；off = 恢复 WIFI_PS_MIN_MODEM 并立即探测一次。
+// 只置标志并唤醒网络任务，由网络任务在 STA 阶段应用（热点配网期间保持不省电）。
+void rb_net_set_low_power(bool on);
+
+// 深睡前调用（终端）：断开并停止 Wi-Fi，网络任务此后不再重连或探测。
+// 在 app 任务中同步执行；调用后只能进入深睡或重启。
+void rb_net_stop(void);
 
 // 打印当前空闲堆与最大连续空闲块（内存预算记录点）。
 void rb_net_log_heap(const char *where);

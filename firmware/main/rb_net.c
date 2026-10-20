@@ -38,6 +38,11 @@ static const char *AP_SSID = "RecBean-Setup";
 #define PROBE_TIMEOUT_MS    2500    // 单次 TCP 探测超时
 #define HTTP_TIMEOUT_MS     5000
 #define SCAN_FETCH_MAX      24
+#define LOOP_MS             200     // 网络任务轮询间隔
+#define LOOP_LOW_POWER_MS   1000    // 浅睡中的轮询间隔
+// STA 的 listen_interval（单位：信标间隔，约 102 ms）：只在 WIFI_PS_MAX_MODEM（浅睡）下生效；
+// 活动态的 MIN_MODEM 按 DTIM 醒来，不受影响。真机上取 10（约 1 s）时浅睡中会掉线，收敛到 3。
+#define STA_LISTEN_INTERVAL 3
 
 // ---- 由 s_mux 保护的共享状态（网络任务写；app/会话任务读）----
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -66,6 +71,9 @@ static volatile bool s_got_ip;
 static volatile bool s_req_reprov;
 static volatile bool s_req_repair;
 static volatile bool s_session_active;
+static volatile bool s_low_power;  // 浅睡：最大省电、暂停探测
+static volatile bool s_stopped;    // 深睡前已停止 Wi-Fi
+static bool s_ps_max;              // 当前已下发的是 WIFI_PS_MAX_MODEM（只由网络任务写）
 static rb_net_phase_t s_initial_phase;
 
 // 临界区内只用这个有界拷贝（不调用 snprintf 等可能取锁的库函数）。
@@ -198,6 +206,7 @@ static esp_err_t apply_sta_config(const char *ssid, const char *password)
     memcpy(sta.sta.password, password, pn);
     sta.sta.threshold.authmode = pn == 0 ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
     sta.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+    sta.sta.listen_interval = STA_LISTEN_INTERVAL;
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta);
     memset(&sta, 0, sizeof(sta));
     return err;
@@ -226,6 +235,7 @@ static void station_connect(void)
         ESP_LOGE(TAG, "STA 启动失败");
     } else {
         (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);   // 省电；8 KB/s 上传不需要关闭省电
+        s_ps_max = false;
         (void)esp_wifi_connect();
     }
     memset(&cfg, 0, sizeof(cfg));
@@ -285,6 +295,7 @@ static void enter_portal(void)
         return;
     }
     (void)esp_wifi_set_ps(WIFI_PS_NONE);
+    s_ps_max = false;
     scan_networks();
     char server[RB_SERVER_CAP];
     taskENTER_CRITICAL(&s_mux);
@@ -303,6 +314,7 @@ static void leave_portal(void)
     if (s_wifi_started) {
         (void)esp_wifi_set_mode(WIFI_MODE_STA);
         (void)esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        s_ps_max = false;
     }
     s_ap_hold_until = 0;
     rb_net_log_heap("portal stop");
@@ -582,6 +594,10 @@ static void handle_wifi_events(void)
         }
         if (p == RB_NET_PROV_AP) return;   // 热点阶段 STA 未使用
         ESP_LOGW(TAG, "Wi-Fi 断开 reason=%u", (unsigned)s_last_reason);
+        taskENTER_CRITICAL(&s_mux);
+        s_st.disc_count++;
+        s_st.disc_reason = s_last_reason;
+        taskEXIT_CRITICAL(&s_mux);
         set_wifi_up(false, NULL);
         // 指数退避重连：1, 2, 4, 8, 10 s …
         s_backoff_ms = s_backoff_ms == 0 ? 1000 : (s_backoff_ms * 2 > 10000 ? 10000 : s_backoff_ms * 2);
@@ -601,12 +617,31 @@ static void net_task(void *arg)
     else station_connect();
 
     for (;;) {
+        if (s_stopped) {
+            // 深睡前已停 Wi-Fi：不再重连、配对或探测，等待入睡。
+            (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            continue;
+        }
         handle_requests();
         handle_wifi_events();
         int64_t now = now_ms();
         rb_net_phase_t p = phase();
 
         if (s_ap_hold_until > 0 && now >= s_ap_hold_until) leave_portal();
+
+        // 浅睡省电：只在纯 STA 阶段切换（热点配网与“已连上”展示期间保持原模式）。
+        bool want_max = s_low_power;
+        if (want_max != s_ps_max && s_wifi_started && s_ap_hold_until == 0 &&
+            (p == RB_NET_PAIRING || p == RB_NET_READY)) {
+            (void)esp_wifi_set_ps(want_max ? WIFI_PS_MAX_MODEM : WIFI_PS_MIN_MODEM);
+            s_ps_max = want_max;
+            ESP_LOGI(TAG, "Wi-Fi 省电模式 → %s", want_max ? "MAX_MODEM" : "MIN_MODEM");
+            // 亮屏时若正在退避等待重连，立即重连并清零退避，避免用户等上 10 s。
+            if (!want_max && s_next_reconnect > 0) {
+                s_backoff_ms = 0;
+                s_next_reconnect = now;
+            }
+        }
 
         switch (p) {
         case RB_NET_PROV_AP:
@@ -621,14 +656,14 @@ static void net_task(void *arg)
             if (s_got_ip && now >= s_next_pair) pair_step();
             break;
         case RB_NET_READY:
-            if (s_got_ip && !s_session_active && now >= s_next_probe) {
+            if (s_got_ip && !s_session_active && !s_low_power && now >= s_next_probe) {
                 bool ok = probe_server();
                 set_server_ok(ok ? 1 : 0, false);
                 s_next_probe = now_ms() + PROBE_INTERVAL_MS;
             }
             break;
         }
-        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(s_low_power ? LOOP_LOW_POWER_MS : LOOP_MS));
     }
 }
 
@@ -710,4 +745,25 @@ void rb_net_set_session_active(bool active)
     s_session_active = active;
     if (!active) s_next_probe = 0;
     if (s_task) xTaskNotifyGive(s_task);
+}
+
+void rb_net_set_low_power(bool on)
+{
+    if (s_low_power == on) return;
+    s_low_power = on;
+    if (!on) s_next_probe = 0;   // 亮屏后立即探测一次，待机页尽快显示真实服务器状态
+    if (s_task) xTaskNotifyGive(s_task);
+}
+
+void rb_net_stop(void)
+{
+    s_stopped = true;
+    if (s_task) xTaskNotifyGive(s_task);
+    if (!s_wifi_started) return;
+    esp_err_t e = esp_wifi_disconnect();
+    if (e != ESP_OK && e != ESP_ERR_WIFI_NOT_CONNECT) ESP_LOGW(TAG, "断开 Wi-Fi 失败: %s", esp_err_to_name(e));
+    e = esp_wifi_stop();
+    if (e != ESP_OK) ESP_LOGW(TAG, "停止 Wi-Fi 失败: %s", esp_err_to_name(e));
+    s_wifi_started = false;
+    ESP_LOGI(TAG, "Wi-Fi 已停止（准备深睡）");
 }

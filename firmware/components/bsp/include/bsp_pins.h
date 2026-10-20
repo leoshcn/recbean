@@ -52,6 +52,9 @@
 // ============================================================================
 #define BSP_BTN_ADC_UNIT     ADC_UNIT_1
 #define BSP_BTN_ADC_CHANNEL  ADC_CHANNEL_0    // GPIO0
+// 同一个引脚的 GPIO 编号：睡眠时释放 ADC 后切成数字输入，作为 light/deep sleep 的低电平
+// 唤醒源（C3 的 deep-sleep GPIO 唤醒只支持 GPIO0~5，换脚时注意）。必须与上面的通道一致。
+#define BSP_BTN_GPIO         0
 #define BSP_BTN_COUNT        3
 
 // 按键判定时序(ms):由 BSP 显式下发给 button 组件,不依赖它的 Kconfig 默认值。
