@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
-- **Last Active**: 2026-10-18
+- **Total Sessions**: 4
+- **Last Active**: 2026-10-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~73 | Active |
+| `journal-1.md` | ~94 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-10-20 | Web 浏览器独立录音 | `105af3a` | `feature/web-browser-recording` |
 | 3 | 2026-10-18 | 录音笔记/会议录音双模式与共享热词 | `0f29f5b` | `feature/dual-mode-notes-meeting` |
 | 2 | 2026-10-18 | 录音豆：一键部署脚本与 PR 合并 | `9050027`, `7ce73c6` | `main` |
 | 1 | 2026-10-18 | 录音豆 MVP：规划、服务端、固件、真机联调 | `7feb5ad`, `d6be965`, `55444b5` | `feature/recbean-mvp` |

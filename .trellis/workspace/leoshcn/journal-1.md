@@ -71,3 +71,24 @@ Trellis 规划录音豆 MVP（D1-D7）；服务端 FastAPI+Vue 部署到测试�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Web 浏览器独立录音
+
+**Date**: 2026-10-20
+**Task**: Web 浏览器独立录音
+**Branch**: `feature/web-browser-recording`
+
+### Summary
+
+规划并实现浏览器录音：麦克风+整屏共享系统音频混音、/web/ws 续录、群晖 HTTPS 反代；Gateway 钩子化并修复 resume 失败丢会话；已部署测试机，用户实测一次成功
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `105af3a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
