@@ -8,6 +8,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:8080',
       '/device': { target: 'http://127.0.0.1:8080', ws: true },
+      '/web/ws': { target: 'http://127.0.0.1:8080', ws: true },
     },
   },
 })

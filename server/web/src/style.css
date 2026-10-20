@@ -39,4 +39,5 @@ textarea { width: 100%; resize: vertical; }
 .badge.done { background: #dcfce7; color: #166534; }
 .badge.asr_error { background: #fef3c7; color: #92400e; }
 .badge.interrupted { background: #e0e7ff; color: #3730a3; }
+.badge.source { background: #f3e8ff; color: #6b21a8; }
 .empty { text-align: center; color: #6b7280; padding: 40px 0; }

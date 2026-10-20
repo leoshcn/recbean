@@ -1,4 +1,4 @@
-"""recbean server: device WebSocket + REST API + static Web UI on one port (8080)."""
+"""recbean server: device + browser WebSockets, REST API + static Web UI on one port (8080)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from .device_ws import Gateway
 from .doubao_asr import engine_factory_from_settings
 from .pairing import PairingManager
 from .store import Store
+from .web_ws import BrowserGateway
 from .wav import repair_wav
 
 log = logging.getLogger("recbean")
@@ -36,7 +37,11 @@ def create_app(settings: Optional[Settings] = None,
     settings.audio_dir.mkdir(parents=True, exist_ok=True)
     store = Store(settings.db_path)
     recover_unfinished(store)
-    gateway = Gateway(settings, store, asr_factory or engine_factory_from_settings(settings))
+    factory = asr_factory or engine_factory_from_settings(settings)
+    gateway = Gateway(settings, store, factory)
+    # Browser recordings share the session table, so the REST API sees them as live and
+    # gateway.shutdown() finishes them too.
+    browser_gateway = BrowserGateway(settings, store, factory, sessions=gateway.sessions)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -50,6 +55,7 @@ def create_app(settings: Optional[Settings] = None,
     app.state.settings = settings
     app.state.store = store
     app.state.gateway = gateway
+    app.state.browser_gateway = browser_gateway
     app.state.pairing = PairingManager(store, settings.pairing_ttl_s)
     app.include_router(api)
     app.include_router(device_http)
@@ -57,6 +63,10 @@ def create_app(settings: Optional[Settings] = None,
     @app.websocket("/device/ws")
     async def device_ws(ws: WebSocket):
         await gateway.handle(ws)
+
+    @app.websocket("/web/ws")
+    async def web_ws(ws: WebSocket):
+        await browser_gateway.handle(ws)
 
     if settings.web_dist.is_dir():
         app.mount("/", StaticFiles(directory=str(settings.web_dist), html=True), name="web")

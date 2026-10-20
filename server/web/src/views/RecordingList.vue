@@ -6,11 +6,14 @@
       <button @click="load">刷新</button>
     </div>
     <p v-if="error" class="error">加载失败：{{ error }}</p>
-    <div v-if="loaded && !items.length" class="card empty">还没有会议录音。在设备上单击“确定”开始。</div>
+    <div v-if="loaded && !items.length" class="card empty">
+      还没有会议录音。在设备上单击“确定”开始，或使用<router-link to="/record">浏览器录音</router-link>。
+    </div>
     <div v-for="r in items" :key="r.id" class="card item" @click="open(r)">
       <div class="row">
         <strong class="title">{{ r.title }}</strong>
         <span class="badge" :class="r.status">{{ STATUS_TEXT[r.status] || r.status }}</span>
+        <span v-if="r.device_id === BROWSER_DEVICE" class="badge source">浏览器</span>
         <span class="spacer" />
         <button class="danger" :disabled="r.live" @click.stop="remove(r)">删除</button>
       </div>
@@ -29,7 +32,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { STATUS_TEXT, fmtDuration, fmtTime } from '../util'
+import { BROWSER_DEVICE, STATUS_TEXT, fmtDuration, fmtTime } from '../util'
 
 const router = useRouter()
 const items = ref([])

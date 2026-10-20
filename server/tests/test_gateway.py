@@ -292,3 +292,23 @@ def test_hotwords_snapshot_at_start(client):
     assert FakeAsr.calls[-1] == ("note", ["录音豆", "豆包"])
     record(client, token, START, 3)
     assert FakeAsr.calls[-1] == ("meeting", ["录音豆", "豆包", "火山引擎"])
+
+
+def test_failed_resume_keeps_active_recording(make_client):
+    """A resume_failed on a connection with an active recording must not orphan it:
+    the recording keeps receiving frames and is detached (-> interrupted) on disconnect."""
+    client = make_client(resume_timeout_s=0.3)
+    token = pair(client)
+    frames = tone_frames(4)
+    with client.websocket_connect("/device/ws", headers=auth(token)) as ws:
+        ws.send_json(START)
+        rec_id = ws.receive_json()["recording_id"]
+        ws.send_bytes(frames[0])
+        ws.send_json({"type": "resume", "recording_id": "nope", "next_seq": 0})
+        assert collect_until(ws, "error")[-1]["code"] == "resume_failed"
+        for f in frames[1:]:
+            ws.send_bytes(f)
+        ws.send_json({"type": "ping"})
+        assert collect_until(ws, "pong")
+    rec = wait_status(client, rec_id, "interrupted")
+    assert rec["duration_ms"] == 800 and rec["live"] is False

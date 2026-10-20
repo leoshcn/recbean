@@ -4,6 +4,7 @@
     <nav>
       <router-link to="/notes" active-class="active">笔记</router-link>
       <router-link to="/meetings" :class="{ active: inMeetings }">会议</router-link>
+      <router-link to="/record" active-class="active">浏览器录音</router-link>
       <router-link to="/hotwords" active-class="active">热词</router-link>
       <router-link to="/pairing" active-class="active">设备配对</router-link>
     </nav>

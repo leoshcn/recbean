@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Doubao ASR & Deployment](./doubao-asr-and-deploy.md) | Verified Doubao ASR contract, speaker field, file-ASR access, test-machine deploy | Done |
+| [Browser Recording & Ingress Gateways](./browser-recording.md) | Gateway hook pattern for new audio sources, resume rule, browser capture / HTTPS-proxy constraints | Done |
 
 ---
 
