@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-10-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~115 | Active |
+| `journal-1.md` | ~136 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-10-20 | 会议录音支持下载为 m4a | `a9b8b5b` | `feature/web-browser-recording` |
 | 5 | 2026-10-20 | Web 端按品牌 VI 重设计 + 深色模式 | `0cb92d9` | `feature/web-browser-recording` |
 | 4 | 2026-10-20 | Web 浏览器独立录音 | `105af3a` | `feature/web-browser-recording` |
 | 3 | 2026-10-18 | 录音笔记/会议录音双模式与共享热词 | `0f29f5b` | `feature/dual-mode-notes-meeting` |
